@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import path from "path";
 import { Command } from "commander";
-import { register, rmEnv, set } from "./actions";
+import { register, rmEnv, set, list } from "./actions";
 
 const program = new Command();
 
@@ -39,5 +38,7 @@ program
   .action((project, env) => {
     rmEnv({ project, env });
   });
+
+program.command("list").action(list);
 
 program.parse();

@@ -1,11 +1,12 @@
+import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import readlineSync from "readline-sync";
 import { ENV_STORE, RegisterInput, RmInput, SetInput } from "./constants";
 
 /**
  * If the environment name already exists it will show diff between both files
- * and ask the user whether to replace it for the new one or not
- */
+ * and ask the user whether to replace it for the new one or not */
 export const register = ({ env, project, target }: RegisterInput) => {
   if (env.includes("/")) {
     return console.error("Environment name can't contain /");
@@ -60,5 +61,18 @@ export const set = ({ env, project, override: _override }: SetInput) => {
  * Remove the env from the store
  */
 export const rmEnv = ({ env, project }: RmInput) => {
-  console.log(env, project);
+  const envFilePath = path.join(ENV_STORE, project, env);
+  if (!fs.existsSync(envFilePath)) {
+    console.warn("This one doesn't exist.");
+  }
+  const content = fs.readFileSync(envFilePath, { encoding: "utf8" });
+  readlineSync.keyInYN(`Are you sure you want to remove this?: \n${content}`);
+  readlineSync.keyInYNStrict("Are you sure 'though?");
+};
+
+/**
+ * List all envs available
+ */
+export const list = () => {
+  console.log(execSync("tree -a", { cwd: ENV_STORE, encoding: "utf8" }));
 };
