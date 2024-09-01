@@ -1,17 +1,27 @@
 {
   "name": "envbro",
-  "version": "0.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "0.0.1",
+  "description": "CLI for managing environment files for multiple projects",
+  "main": "index.ts",
   "scripts": {
     "build": "tsc"
   },
   "bin": {
     "envbro": "./dist/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "cli",
+    "env"
+  ],
+  "bugs": {
+    "url": "https://github.com/nicolasLuduena/envbro/issues"
+  },
+  "author": "Nicolás Ludueña <luduena.nicolas.victorio@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/nicolasLuduena/envbro",
+  "repository": {
+    "url": "https://github.com/nicolasLuduena/envbro"
+  },
   "devDependencies": {
     "@types/node": "^22.5.0",
     "@types/readline-sync": "^1.4.8",
