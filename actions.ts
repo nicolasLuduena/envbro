@@ -8,6 +8,7 @@ import {
   RegisterInput,
   RmInput,
   SetInput,
+  ShowInput,
 } from "./constants";
 
 /**
@@ -34,13 +35,10 @@ export const register = ({ env, project, target }: RegisterInput) => {
       encoding: "utf8",
     });
 
-    if (diff.length) {
-      console.log(
-        "What you have stored now vs What will be stored if you continue",
-      );
-      console.log(diff);
-    }
-
+    console.log(
+      "What you have stored now vs What will be stored if you continue",
+    );
+    console.log(diff);
     const wantToOverride = readlineSync.keyInYNStrict(
       "Are you sure you want to change the stored env?",
     );
@@ -71,14 +69,12 @@ export const set = async ({ env, project }: SetInput) => {
     const diff = execSync(`diff -y  ${envFileToSet} ${storedEnvFile} || true`, {
       encoding: "utf8",
     });
-    if (diff.length) {
-      console.log("What you have now vs What you will have if you continue");
-      console.log(diff);
-      const wantToOverride = readlineSync.keyInYNStrict(
-        "Are you sure you want to change the env you have right now?",
-      );
-      if (!wantToOverride) return;
-    }
+    console.log("What you have now vs What you will have if you continue");
+    console.log(diff);
+    const wantToOverride = readlineSync.keyInYNStrict(
+      "Are you sure you want to change the env you have right now?",
+    );
+    if (!wantToOverride) return;
   }
   fs.copyFileSync(storedEnvFile, envFileToSet);
   console.info(`${env} set`);
@@ -101,9 +97,7 @@ export const rmEnv = ({ env, project }: RmInput) => {
     `Are you sure you want to remove this?: \n${content}`,
   );
   if (prelimChoice) {
-    const trueChoice = readlineSync.keyInYNStrict(
-      "But... Are you really sure?",
-    );
+    const trueChoice = readlineSync.keyInYNStrict("Are you sure?");
     trueChoice && fs.rmSync(envFilePath, { recursive: true, force: true });
     !fs.readdirSync(path.join(ENV_STORE, project)).length &&
       fs.rmdirSync(path.join(ENV_STORE, project));
@@ -116,4 +110,28 @@ export const rmEnv = ({ env, project }: RmInput) => {
 export const list = ({ project }: ListInput) => {
   const dirToShow = project ? path.join(ENV_STORE, project) : ENV_STORE;
   console.log(execSync("tree -a", { cwd: dirToShow, encoding: "utf8" }));
+};
+
+/**
+ * Show environment file contents
+ */
+export const show = ({ project, env }: ShowInput) => {
+  const envDirFilePath = path.join(ENV_STORE, project, env);
+  if (
+    !fs.existsSync(envDirFilePath) ||
+    !fs.statSync(envDirFilePath).isDirectory()
+  ) {
+    return console.error("Project environment does not exist");
+  }
+
+  const envs = fs.readdirSync(envDirFilePath);
+  if (!envs.length) {
+    return console.error("Project environment does not exist");
+  }
+  const [envFileName] = envs;
+
+  const content = fs.readFileSync(path.join(envDirFilePath, envFileName), {
+    encoding: "utf8",
+  });
+  console.log(content);
 };

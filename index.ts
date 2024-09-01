@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { register, rmEnv, set, list } from "./actions";
+import { list, register, rmEnv, show, set } from "./actions";
 
 const program = new Command();
 
@@ -37,5 +37,12 @@ program
   .description("Lists environments and filter by project")
   .option("-p, --project <string>", "Project to list envs for")
   .action((project) => list(project));
+
+program
+  .command("show")
+  .description("Shows environment file contents")
+  .argument("<string>", "Project name")
+  .argument("<string>", "Environment name")
+  .action((project, env) => show({ project, env }));
 
 program.parse();

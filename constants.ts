@@ -25,3 +25,8 @@ export type RmInput = {
 export type ListInput = {
   project?: string;
 };
+
+export type ShowInput = {
+  project: string;
+  env: string;
+};
