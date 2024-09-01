@@ -15,7 +15,6 @@ export type RegisterInput = {
 export type SetInput = {
   env: string;
   project: string;
-  override?: boolean;
 };
 
 export type RmInput = {

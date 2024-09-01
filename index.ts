@@ -11,13 +11,7 @@ program
   .description("Sets the environment for a project")
   .argument("<string>", "Project name for whichset the environment will be set")
   .argument("<string>", "Environment to set for the project")
-  .option(
-    "-o, --override",
-    "Override an environment file that's not registered",
-  )
-  .action((project, env, { override }) => {
-    set({ env, project, override });
-  });
+  .action((project, env) => set({ env, project }));
 
 program
   .command("register")
@@ -25,7 +19,6 @@ program
   .argument("<string>", "Project name")
   .argument("<string>", "Environment name")
   .requiredOption("--path <string>", "Path the environment file")
-  .option("-o, --override", "Override the registered environment file")
   .action((project, env, { path: target }) =>
     register({ env, project, target }),
   );

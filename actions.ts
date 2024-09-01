@@ -12,7 +12,8 @@ import {
 
 /**
  * If the environment name already exists it will show diff between both files
- * and ask the user whether to replace it for the new one or not */
+ * and ask the user whether to replace it for the new one or not
+ */
 export const register = ({ env, project, target }: RegisterInput) => {
   if (env.includes("/")) {
     return console.error("Environment name can not contain /");
@@ -25,12 +26,27 @@ export const register = ({ env, project, target }: RegisterInput) => {
   }
 
   fs.mkdirSync(envPath, { recursive: true });
+  const storedEnvPath = path.join(envPath, fileName);
+
   const dir = fs.readdirSync(envPath);
   if (dir.length) {
-    return console.warn("Env already exists. Override not implemented yet");
+    const diff = execSync(`diff -y  ${storedEnvPath} ${target} || true`, {
+      encoding: "utf8",
+    });
+
+    if (diff.length) {
+      console.log(
+        "What you have stored now vs What will be stored if you continue",
+      );
+      console.log(diff);
+    }
+
+    const wantToOverride = readlineSync.keyInYNStrict(
+      "Are you sure you want to change the stored env?",
+    );
+    if (!wantToOverride) return;
   }
 
-  const storedEnvPath = path.join(envPath, fileName);
   fs.copyFileSync(target, storedEnvPath);
   console.info("New env stored");
 };
@@ -38,7 +54,7 @@ export const register = ({ env, project, target }: RegisterInput) => {
 /**
  * Sets the environment file for the project specified in the current working directory
  */
-export const set = ({ env, project, override: _override }: SetInput) => {
+export const set = async ({ env, project }: SetInput) => {
   const envFilePath = path.join(ENV_STORE, project, env);
   if (
     // checks conditions for the env file before reading them
@@ -51,9 +67,18 @@ export const set = ({ env, project, override: _override }: SetInput) => {
   const storedEnvFile = path.join(envFilePath, fs.readdirSync(envFilePath)[0]);
   const envFileToSet = path.join(process.cwd(), path.basename(storedEnvFile));
 
-  // TODO: implement override
   if (fs.existsSync(envFileToSet)) {
-    return console.warn("Env is already set. Override not implemented yet.");
+    const diff = execSync(`diff -y  ${envFileToSet} ${storedEnvFile} || true`, {
+      encoding: "utf8",
+    });
+    if (diff.length) {
+      console.log("What you have now vs What you will have if you continue");
+      console.log(diff);
+      const wantToOverride = readlineSync.keyInYNStrict(
+        "Are you sure you want to change the env you have right now?",
+      );
+      if (!wantToOverride) return;
+    }
   }
   fs.copyFileSync(storedEnvFile, envFileToSet);
   console.info(`${env} set`);
