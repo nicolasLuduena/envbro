@@ -2,33 +2,37 @@ import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import readlineSync from "readline-sync";
-import { ENV_STORE, RegisterInput, RmInput, SetInput } from "./constants";
+import {
+  ENV_STORE,
+  ListInput,
+  RegisterInput,
+  RmInput,
+  SetInput,
+} from "./constants";
 
 /**
  * If the environment name already exists it will show diff between both files
  * and ask the user whether to replace it for the new one or not */
 export const register = ({ env, project, target }: RegisterInput) => {
   if (env.includes("/")) {
-    return console.error("Environment name can't contain /");
+    return console.error("Environment name can not contain /");
   }
   const envPath = path.join(ENV_STORE, project, env);
   const fileName = path.basename(target);
 
   if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
-    return console.error("Make sure the file exists");
+    return console.error("File doesn't exist");
   }
 
   fs.mkdirSync(envPath, { recursive: true });
   const dir = fs.readdirSync(envPath);
   if (dir.length) {
-    return console.warn(
-      "This env already has contents. Feature to override in progress",
-    );
+    return console.warn("Env already exists. Override not implemented yet");
   }
 
   const storedEnvPath = path.join(envPath, fileName);
   fs.copyFileSync(target, storedEnvPath);
-  console.info("Stored your new env");
+  console.info("New env stored");
 };
 
 /**
@@ -40,21 +44,19 @@ export const set = ({ env, project, override: _override }: SetInput) => {
     // checks conditions for the env file before reading them
     !fs.existsSync(envFilePath) ||
     !fs.statSync(envFilePath).isDirectory() ||
-    !!fs.readdirSync(envFilePath).length
+    !fs.readdirSync(envFilePath).length
   ) {
-    return console.warn("This environment doesn not exist for this project");
+    return console.warn("Env does not exist");
   }
   const storedEnvFile = path.join(envFilePath, fs.readdirSync(envFilePath)[0]);
-  const envFileToSet = path.join(process.cwd(), storedEnvFile);
+  const envFileToSet = path.join(process.cwd(), path.basename(storedEnvFile));
 
   // TODO: implement override
   if (fs.existsSync(envFileToSet)) {
-    return console.warn(
-      "Environment file is present already. Override not implemented",
-    );
+    return console.warn("Env is already set. Override not implemented yet.");
   }
   fs.copyFileSync(storedEnvFile, envFileToSet);
-  console.info(`${env} env set my good friend`);
+  console.info(`${env} set`);
 };
 
 /**
@@ -62,17 +64,31 @@ export const set = ({ env, project, override: _override }: SetInput) => {
  */
 export const rmEnv = ({ env, project }: RmInput) => {
   const envFilePath = path.join(ENV_STORE, project, env);
-  if (!fs.existsSync(envFilePath)) {
-    console.warn("This one doesn't exist.");
+  if (!fs.existsSync(envFilePath) || !fs.readdirSync(envFilePath).length) {
+    return console.warn("Env does not exist");
   }
-  const content = fs.readFileSync(envFilePath, { encoding: "utf8" });
-  readlineSync.keyInYN(`Are you sure you want to remove this?: \n${content}`);
-  readlineSync.keyInYNStrict("Are you sure 'though?");
+  const [file] = fs.readdirSync(envFilePath);
+
+  const content = fs.readFileSync(path.join(envFilePath, file), {
+    encoding: "utf8",
+  });
+  const prelimChoice = readlineSync.keyInYNStrict(
+    `Are you sure you want to remove this?: \n${content}`,
+  );
+  if (prelimChoice) {
+    const trueChoice = readlineSync.keyInYNStrict(
+      "But... Are you really sure?",
+    );
+    trueChoice && fs.rmSync(envFilePath, { recursive: true, force: true });
+    !fs.readdirSync(path.join(ENV_STORE, project)).length &&
+      fs.rmdirSync(path.join(ENV_STORE, project));
+  }
 };
 
 /**
  * List all envs available
  */
-export const list = () => {
-  console.log(execSync("tree -a", { cwd: ENV_STORE, encoding: "utf8" }));
+export const list = ({ project }: ListInput) => {
+  const dirToShow = project ? path.join(ENV_STORE, project) : ENV_STORE;
+  console.log(execSync("tree -a", { cwd: dirToShow, encoding: "utf8" }));
 };

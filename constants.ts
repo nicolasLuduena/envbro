@@ -22,3 +22,7 @@ export type RmInput = {
   env: string;
   project: string;
 };
+
+export type ListInput = {
+  project?: string;
+};

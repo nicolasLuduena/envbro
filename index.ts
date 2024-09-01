@@ -39,6 +39,10 @@ program
     rmEnv({ project, env });
   });
 
-program.command("list").action(list);
+program
+  .command("list")
+  .description("Lists environments and filter by project")
+  .option("-p, --project <string>", "Project to list envs for")
+  .action((project) => list(project));
 
 program.parse();
