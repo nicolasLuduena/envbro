@@ -52,6 +52,8 @@ Bob's "ZK-ID" effectively acts as a **Public Key**.
 > **Future Consideration (Quantum Safety)**: Standard ECDH is vulnerable to future quantum computers. In the long term, we may consider switching to **ML-KEM (Kyber)**, though this introduces larger key sizes (~1KB vs 32 bytes) which complicates on-chain storage.
 
 ### Future Research: Proxy Re-Encryption (PRE)
+What if we use a shielded token to control access to the vault key?
+Anyone with it could use its secure type to decrypt the vault key. Basically the token would be the vault key.
 > [!WARNING]
 > **Out of Scope**: This feature is NOT part of the current Milestone 3. It is listed here solely for future scalability research.
 
