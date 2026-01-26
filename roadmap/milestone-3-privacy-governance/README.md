@@ -18,4 +18,5 @@ We will use **Midnight**, a privacy-preserving blockchain, to act as the gatekee
 | [ISSUE-1](./issues/1-midnight-contract.md) | Design `EnvRegistry` Smart Contract |
 | [ISSUE-2](./issues/2-zkp-access-flow.md) | Implement Inbox Scanner & Decryption |
 | [ISSUE-3](./issues/3-local-caching.md) | Implement Local Encrypted Caching |
-| [ISSUE-4](./issues/4-key-rotation.md) | Key Rotation & Disaster Recovery Logic |
+| [ISSUE-4](./issues/4-key-recover.md) | Social Recovery Protocol |
+| [ISSUE-5](./issues/5-key-rotation.md) | Key Rotation Logic (Future) |

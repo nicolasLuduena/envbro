@@ -9,6 +9,7 @@ We will use **Hyperswarm** to discover peers via a Distributed Hash Table (DHT) 
 - [ ] **Discovery**: Peers can find each other using a shared key.
 - [ ] **Syncing**: Data is replicated automatically when peers connect.
 - [ ] **Access Control (Basic)**: Only those with the "Discovery Key" (Capability) can find and sync the data.
+- [ ] **CI/CD Reliability**: High-availability read-only access for build pipelines (HTTP Gateway).
 
 ## Issues
 | Issue | Description |
@@ -16,3 +17,4 @@ We will use **Hyperswarm** to discover peers via a Distributed Hash Table (DHT) 
 | [ISSUE-1](./issues/1-integrate-hyperswarm.md) | Integrate Hyperswarm for P2P Discovery |
 | [ISSUE-2](./issues/2-share-command.md) | Implement `envbro share` (Host) |
 | [ISSUE-3](./issues/3-clone-command.md) | Implement `envbro clone` (Client) |
+| [ISSUE-4](./issues/4-ci-cd-gateway.md) | Implement HTTP Gateway for CI/CD |
