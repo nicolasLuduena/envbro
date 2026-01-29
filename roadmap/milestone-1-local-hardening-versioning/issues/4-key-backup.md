@@ -6,24 +6,17 @@ If a user's hard drive crashes, their encrypted vault is useless without the Mas
 To mitigate this Single Point of Failure, we must allow users to export their key in a human-readable format for physical safekeeping.
 
 ## Requirements
+- **Command**: `envbro key export`.
+- **Output**: A 12/24-word Mnemonic phrase (BIP-39) OR the raw Secret Key (base32).
 
-### 1. Mnemonic Generation (BIP-39)
-- When initializing a new vault (`envbro init`), generate a **12 or 24-word seed phrase**.
-- Derive the Master Encryption Key from this seed.
+## Implementation Steps
+1.  Access the root Iroh SecretKey.
+2.  Display it to the user with a warning.
+3.  Implement `envbro key import <phrase/key>` to restore identity.
 
-### 2. Export Command
-- Implement `envbro key export --reveal`.
-- **UX**:
-    - Display a big warning: "Authorized eyes only".
-    - Show the Mnemonic phrase.
-    - Show the raw Hex key (optional, for automation).
-    - Suggest printing it and storing it in a physical safe.
-
-### 3. Import / Recovery Command
-- Implement `envbro recover` (or `init --recover`).
-- Prompt the user to enter their seed phrase.
-- Re-derive the keys and attempt to locate the Hypercore feed (if the path is known or if we implement a registry later).
-    - *Note*: In M1 (Local Only), this just restores the ability to read the local `.envbro` folder. If the folder itself is deleted, the key alone won't get data back until M2 (P2P Sync).
+## Acceptance Criteria
+- [ ] `envbro key export` displays the secret.
+- [ ] `envbro key import` restores the identity on a fresh machine.
 
 ### 4. Security Considerations
 - The mnemonic should never be stored in plaintext on disk.

@@ -4,19 +4,19 @@
 Currently, `envbro` stores environment variables as plain text files in the user's home directory. This is a security vulnerability. We need to ensure that even if an attacker gains read access to the file system, they cannot read the secrets without the master key.
 
 ## Requirements
-- **Algorithm**: Use `AES-256-GCM`. It provides both confidentiality and integrity checks.
-- **Key Derivation**: Use `PBKDF2` or `Argon2` to derive a symmetric encryption key from a user-supplied Master Password.
+- **Algorithm**: Use `AES-256-GCM` (Authenticated Encryption).
+- **Key Derivation**: Use `Argon2` to derive a symmetric encryption key from a user-supplied Passphrase.
 - **Session Management**: 
-    - On first run in a session, prompt user for Master Password.
-    - Cache the derived key in memory (NOT on disk) for the duration of the process.
+    - On first run in a session, prompt user for Passphrase.
+    - Keep the `SecretKey` in memory (pinned/zeroized if possible) for the session duration.
 
 ## Implementation Steps
-1.  Add `createCipheriv` and `createDecipheriv` from the native `crypto` module.
-2.  Create a `SecurityManager` class to handle key derivation and encryption/decryption routines.
-3.  Update the `store` logic to encrypt payload before writing to disk.
-4.  Update the `read` logic to decrypt payload after reading from disk.
+1.  Add `aes-gcm` and `argon2` crates.
+2.  Create a `security` module (`src/security.rs`) to handle key derivation and encryption/decryption routines.
+3.  Implement `encrypt(data: &[u8], key: &Key) -> Result<Vec<u8>>`.
+4.  Implement `decrypt(data: &[u8], key: &Key) -> Result<Vec<u8>>`.
 
 ## Acceptance Criteria
-- [ ] Valid master password decrypts the store.
-- [ ] Invalid master password throws an error.
-- [ ] Inspection of storage files reveals high-entropy random bytes (ciphertext), not plain text.
+- [ ] Valid passphrase decrypts the store.
+- [ ] Invalid passphrase returns an `AuthError`.
+- [ ] Inspection of storage files reveals high-entropy random bytes (ciphertext).

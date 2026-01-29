@@ -12,8 +12,8 @@ Blockchain interactions are slow. We don't want to hit the Midnight network ever
     3.  If NOT in cache -> Trigger **Inbox Scan** (Issue 2) -> Store in Cache -> Use.
 
 ## Implementation Steps
-1.  Extend `SecurityManager` from Milestone 1.
-2.  Implement `KeyCache` class.
+1.  Use `security` module from Milestone 1.
+2.  Implement `KeyCache` struct.
 3.  Add logic to invalidate cache (e.g., if key rotation happens on-chain).
 
 ## Acceptance Criteria

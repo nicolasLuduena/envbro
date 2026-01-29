@@ -20,7 +20,7 @@
 3.  **Vouching**:
     - The Guardians see the request.
     - They communicate offline ("Is this really you?").
-    - If satisfied, they invoke `approveRecovery(request_id)` on the contract.
+    - If satisfied, they invoke `approve_recovery(request_id)` on the contract.
 
 4.  **Restoration**:
     - Once the threshold (e.g., 2 of 3) is met, the Smart Contract updates the mapping.
