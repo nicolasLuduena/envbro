@@ -12,7 +12,7 @@ fn test_register_and_list() {
     let src_env = temp_dir.path().join(".env.test");
     fs::write(&src_env, "FOO=bar").unwrap();
 
-    let mut cmd = Command::cargo_bin("envbro").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.env("ENVBRO_ROOT", root)
         .arg("register")
         .arg("myproject")
@@ -29,7 +29,7 @@ fn test_register_and_list() {
     assert_eq!(fs::read_to_string(stored_file).unwrap(), "FOO=bar");
 
     // Test List
-    let mut cmd_list = Command::cargo_bin("envbro").unwrap();
+    let mut cmd_list = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd_list
         .env("ENVBRO_ROOT", root)
         .arg("list")
@@ -51,7 +51,7 @@ fn test_set() {
     fs::write(env_dir.join(".env.dev"), "SECRET=123").unwrap();
 
     // Run set command
-    let mut cmd = Command::cargo_bin("envbro").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.current_dir(cwd.path())
         .env("ENVBRO_ROOT", root)
         .arg("set")
@@ -77,7 +77,7 @@ fn test_show() {
     fs::create_dir_all(&env_dir).unwrap();
     fs::write(env_dir.join(".env.staging"), "KEY=VALUE").unwrap();
 
-    let mut cmd = Command::cargo_bin("envbro").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.env("ENVBRO_ROOT", root)
         .arg("show")
         .arg("myproject")
@@ -98,7 +98,7 @@ fn test_remove() {
     fs::write(env_dir.join(".env.test"), "DELETE_ME=1").unwrap();
 
     // Run remove with --force
-    let mut cmd = Command::cargo_bin("envbro").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.env("ENVBRO_ROOT", root)
         .arg("rm")
         .arg("myproject")
