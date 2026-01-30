@@ -14,6 +14,7 @@ fn test_register_and_list() {
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
         .arg("register")
         .arg("myproject")
         .arg("prod")
@@ -26,7 +27,9 @@ fn test_register_and_list() {
     // Verify it exists in the store
     let stored_file = temp_dir.path().join("myproject/prod/.env.test");
     assert!(stored_file.exists());
-    assert_eq!(fs::read_to_string(stored_file).unwrap(), "FOO=bar");
+    let content = fs::read(&stored_file).unwrap();
+    // Should NOT be plain text
+    assert_ne!(content, b"FOO=bar");
 
     // Test List
     let mut cmd_list = Command::new(env!("CARGO_BIN_EXE_envbro"));
@@ -45,15 +48,26 @@ fn test_set() {
     let root = temp_dir.path().to_str().unwrap();
     let cwd = tempdir().unwrap();
 
-    // Setup store with one env
-    let env_dir = temp_dir.path().join("myproject/dev");
-    fs::create_dir_all(&env_dir).unwrap();
-    fs::write(env_dir.join(".env.dev"), "SECRET=123").unwrap();
+    // Setup store with one env using register
+    let env_src = temp_dir.path().join("source.env");
+    fs::write(&env_src, "SECRET=123").unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
+        .arg("register")
+        .arg("myproject")
+        .arg("dev")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .success();
 
     // Run set command
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.current_dir(cwd.path())
         .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
         .arg("set")
         .arg("myproject")
         .arg("dev")
@@ -61,8 +75,8 @@ fn test_set() {
         .success()
         .stderr(predicate::str::contains("dev set"));
 
-    // Verify file copied to CWD
-    let target = cwd.path().join(".env.dev");
+    // Verify file copied to CWD and is decrypted
+    let target = cwd.path().join("source.env"); // register uses filename
     assert!(target.exists());
     assert_eq!(fs::read_to_string(target).unwrap(), "SECRET=123");
 }
@@ -72,13 +86,24 @@ fn test_show() {
     let temp_dir = tempdir().unwrap();
     let root = temp_dir.path().to_str().unwrap();
 
-    // Setup store
-    let env_dir = temp_dir.path().join("myproject/staging");
-    fs::create_dir_all(&env_dir).unwrap();
-    fs::write(env_dir.join(".env.staging"), "KEY=VALUE").unwrap();
+    // Setup store with register
+    let env_src = temp_dir.path().join("source.env");
+    fs::write(&env_src, "KEY=VALUE").unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
+        .arg("register")
+        .arg("myproject")
+        .arg("staging")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .success();
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
         .arg("show")
         .arg("myproject")
         .arg("staging")
@@ -92,14 +117,28 @@ fn test_remove() {
     let temp_dir = tempdir().unwrap();
     let root = temp_dir.path().to_str().unwrap();
 
-    // Setup store
-    let env_dir = temp_dir.path().join("myproject/test");
-    fs::create_dir_all(&env_dir).unwrap();
-    fs::write(env_dir.join(".env.test"), "DELETE_ME=1").unwrap();
+    // Setup store with register
+    let env_src = temp_dir.path().join("source.env");
+    fs::write(&env_src, "DELETE_ME=1").unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
+        .arg("register")
+        .arg("myproject")
+        .arg("test")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .success();
+
+    // Verify it exists
+    assert!(temp_dir.path().join("myproject/test").exists());
 
     // Run remove with --force
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd.env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
         .arg("rm")
         .arg("myproject")
         .arg("test")
@@ -109,7 +148,7 @@ fn test_remove() {
         .stderr(predicate::str::contains("Removed env: test"));
 
     // Verify removed
-    assert!(!env_dir.exists());
+    assert!(!temp_dir.path().join("myproject/test").exists());
     // Also verify project dir removed since it was empty
     assert!(!temp_dir.path().join("myproject").exists());
 }
