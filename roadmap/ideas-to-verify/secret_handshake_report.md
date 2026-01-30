@@ -124,4 +124,24 @@ sequenceDiagram
     Bob->>Bob: Attempt Decrypt with esk
     Bob->>Bob: Success! Recover CoinInfo
     Bob->>Bob: Extract Secret from Nonce
+
+## 7. Extension: Secure Group Secret Distribution
+
+This protocol scales effectively for distributing the **same secret** to **multiple recipients** (e.g., Alice sends a shared access key to Bob, Charlie, and Dave).
+
+### 7.1 Mechanism
+Alice executes the "Transmission" phase multiple times, once for each recipient:
+1.  **To Bob**: Encrypts `Token(Nonce=S)` using `EPK_Bob`.
+2.  **To Charlie**: Encrypts `Token(Nonce=S)` using `EPK_Charlie`.
+3.  **To Dave**: Encrypts `Token(Nonce=S)` using `EPK_Dave`.
+
+### 7.2 Security Properties
+*   **Network Privacy**: Each transaction uses a fresh ephemeral key (`r`) for encryption. The resulting ciphertexts (`Ciphertext_Bob`, `Ciphertext_Charlie`, etc.) are completely uncorrelated bytes. An external observer cannot link these transactions or determine they carry the same payload.
+*   **Recipient Isolation**: Bob **cannot** determine that Charlie also received the secret. Bob can only decrypt his own output. He cannot decrypt Charlie's output to compare the payload. The distribution list is known **only** to Alice.
+*   **Spend Independence**: Even if Bob and Charlie decide to "spend" these coins later (creating nullifiers), their nullifiers will be distinct because the nullifier derives from the *owner's key* as well as the nonce.
+    *   `Nullifier_Bob = Hash(SK_Bob, Nonce_S, ...)`
+    *   `Nullifier_Charlie = Hash(SK_Charlie, Nonce_S, ...)`
+    *   The network sees two unrelated nullifiers, maintaining privacy even if the "message coins" are consumed.
+
+This extension effectively turns Midnight into a **private multicast channel** where a single source can securely provision a group with shared credentials without leaking the group's membership or size.
 ```
