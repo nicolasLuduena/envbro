@@ -1,4 +1,5 @@
 mod commands;
+mod security;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -73,25 +74,42 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    let passphrase_input = match &cli.command {
+        Commands::List { .. } => None, // Not needed for listing
+        _ => {
+            if let Ok(p) = std::env::var("ENVBRO_PASSPHRASE") {
+                Some(p)
+            } else {
+                Some(
+                    dialoguer::Password::new()
+                        .with_prompt("Passphrase")
+                        .interact()?,
+                )
+            }
+        }
+    };
+
+    let passphrase = passphrase_input.as_deref();
+
     match cli.command {
         Commands::Set {
             project,
             env,
             force,
-        } => commands::set_env(&project, &env, force)?,
+        } => commands::set_env(&project, &env, force, passphrase.unwrap())?,
         Commands::Register {
             project,
             env,
             path,
             force,
-        } => commands::register(&project, &env, &path, force)?,
+        } => commands::register(&project, &env, &path, force, passphrase.unwrap())?,
         Commands::Rm {
             project,
             env,
             force,
-        } => commands::remove(&project, &env, force)?,
+        } => commands::remove(&project, &env, force, passphrase.unwrap())?,
         Commands::List { project } => commands::list(project.as_deref())?,
-        Commands::Show { project, env } => commands::show(&project, &env)?,
+        Commands::Show { project, env } => commands::show(&project, &env, passphrase.unwrap())?,
     }
 
     Ok(())

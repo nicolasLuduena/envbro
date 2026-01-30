@@ -1,3 +1,4 @@
+use crate::security;
 use anyhow::{bail, Context, Result};
 use console::Style;
 use dialoguer::{theme::ColorfulTheme, Confirm};
@@ -16,7 +17,13 @@ fn get_store_path() -> Result<PathBuf> {
     Ok(home.join(".envbro"))
 }
 
-pub fn register(project: &str, env: &str, target_path: &str, force: bool) -> Result<()> {
+pub fn register(
+    project: &str,
+    env: &str,
+    target_path: &str,
+    force: bool,
+    passphrase: &str,
+) -> Result<()> {
     if env.contains('/') {
         bail!("Environment name cannot contain /");
     }
@@ -37,8 +44,12 @@ pub fn register(project: &str, env: &str, target_path: &str, force: bool) -> Res
 
     // Check existing
     if stored_env_path.exists() {
+        let encrypted_content =
+            fs::read(&stored_env_path).context("Failed to read existing stored env")?;
+        let old_content_bytes = security::decrypt(&encrypted_content, passphrase)
+            .context("Failed to decrypt existing env file")?;
         let old_content =
-            fs::read_to_string(&stored_env_path).context("Failed to read existing stored env")?;
+            String::from_utf8(old_content_bytes).context("Stored content is not valid UTF-8")?;
         let new_content = fs::read_to_string(target_path).context("Failed to read target file")?;
 
         if old_content != new_content {
@@ -55,13 +66,18 @@ pub fn register(project: &str, env: &str, target_path: &str, force: bool) -> Res
         }
     }
 
-    fs::copy(target_path, stored_env_path).context("Failed to copy env file")?;
+    let new_content_bytes = fs::read(target_path).context("Failed to read target file")?;
+    // Verify it is UTF-8 to ensure we are encrypting text (optional but good sanity check since we treat it as env vars)
+    let _ = std::str::from_utf8(&new_content_bytes).context("Target file is not valid UTF-8")?;
+
+    let encrypted = security::encrypt(&new_content_bytes, passphrase)?;
+    fs::write(stored_env_path, encrypted).context("Failed to write encrypted env file")?;
     info!("New env stored");
 
     Ok(())
 }
 
-pub fn set_env(project: &str, env: &str, force: bool) -> Result<()> {
+pub fn set_env(project: &str, env: &str, force: bool, passphrase: &str) -> Result<()> {
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 
@@ -89,8 +105,13 @@ pub fn set_env(project: &str, env: &str, force: bool) -> Result<()> {
     if target_file_path.exists() {
         let old_content =
             fs::read_to_string(&target_file_path).context("Failed to read existing local file")?;
+
+        let encrypted_stored =
+            fs::read(&stored_file_path).context("Failed to read stored env file")?;
+        let new_content_bytes = security::decrypt(&encrypted_stored, passphrase)
+            .context("Failed to decrypt stored env file")?;
         let new_content =
-            fs::read_to_string(&stored_file_path).context("Failed to read stored env file")?;
+            String::from_utf8(new_content_bytes).context("Stored content is not valid UTF-8")?;
 
         if old_content != new_content {
             println!("What you have now vs What you will have if you continue:");
@@ -106,14 +127,19 @@ pub fn set_env(project: &str, env: &str, force: bool) -> Result<()> {
         }
     }
 
-    fs::copy(&stored_file_path, &target_file_path)
-        .context("Failed to copy env file to current directory")?;
+    // For the actual operation, we just decrypt and write to target
+    // If we didn't do the check above, we still need to read/decrypt source
+    // But we might have already done it.
+    // Let's re-do or restructure. For simplicity: re-read/decrypt is safer than relying on scope.
+    let encrypted_stored = fs::read(&stored_file_path).context("Failed to read stored env file")?;
+    let decrypted_content = security::decrypt(&encrypted_stored, passphrase)?;
+    fs::write(&target_file_path, decrypted_content).context("Failed to write target env file")?;
     info!("{} set", env);
 
     Ok(())
 }
 
-pub fn remove(project: &str, env: &str, force: bool) -> Result<()> {
+pub fn remove(project: &str, env: &str, force: bool, passphrase: &str) -> Result<()> {
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 
@@ -124,7 +150,10 @@ pub fn remove(project: &str, env: &str, force: bool) -> Result<()> {
 
     let mut entries = fs::read_dir(&env_path)?;
     if let Some(Ok(entry)) = entries.next() {
-        let content = fs::read_to_string(entry.path()).context("Failed to read env file")?;
+        let encrypted_content = fs::read(entry.path()).context("Failed to read env file")?;
+        let content_bytes = security::decrypt(&encrypted_content, passphrase)
+            .context("Failed to decrypt env file for confirmation")?;
+        let content = String::from_utf8_lossy(&content_bytes);
 
         if !force {
             if !Confirm::with_theme(&ColorfulTheme::default())
@@ -192,7 +221,7 @@ pub fn list(project: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub fn show(project: &str, env: &str) -> Result<()> {
+pub fn show(project: &str, env: &str, passphrase: &str) -> Result<()> {
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 
@@ -203,7 +232,9 @@ pub fn show(project: &str, env: &str) -> Result<()> {
     let mut entries = fs::read_dir(&env_path)?;
     match entries.next() {
         Some(Ok(entry)) => {
-            let content = fs::read_to_string(entry.path()).context("Failed to read env file")?;
+            let encrypted_content = fs::read(entry.path()).context("Failed to read env file")?;
+            let content_bytes = security::decrypt(&encrypted_content, passphrase)?;
+            let content = String::from_utf8_lossy(&content_bytes);
             println!("{}", content);
         }
         _ => {
