@@ -45,7 +45,7 @@ pub fn generate_salt() -> [u8; 16] {
 /// Returns a vector containing [SALT (16) | NONCE (12) | CIPHERTEXT + TAG].
 pub fn encrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     let salt = generate_salt();
-    let key = derive_key(passphrase, &salt)?;
+    let mut key = derive_key(passphrase, &salt)?;
 
     let cipher = Aes256Gcm::new(&key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // 96-bits; unique per message
@@ -60,8 +60,7 @@ pub fn encrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     result.extend_from_slice(&ciphertext);
 
     // Zeroize key from memory
-    let mut key_cleanup = key;
-    key_cleanup.zeroize();
+    key.zeroize();
 
     Ok(result)
 }
@@ -76,7 +75,7 @@ pub fn decrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     let (salt, rest) = data.split_at(16);
     let (nonce_bytes, ciphertext) = rest.split_at(12);
 
-    let key = derive_key(passphrase, salt)?;
+    let mut key = derive_key(passphrase, salt)?;
     let cipher = Aes256Gcm::new(&key.into());
     let nonce = Nonce::from_slice(nonce_bytes);
 
@@ -85,8 +84,7 @@ pub fn decrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("Decryption failed (invalid passphrase or corrupted data)"))?;
 
     // Zeroize key from memory
-    let mut key_cleanup = key;
-    key_cleanup.zeroize();
+    key.zeroize();
 
     Ok(plaintext)
 }

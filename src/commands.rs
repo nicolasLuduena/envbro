@@ -102,16 +102,16 @@ pub fn set_env(project: &str, env: &str, force: bool, passphrase: &str) -> Resul
         .context("Invalid stored filename")?;
     let target_file_path = std::env::current_dir()?.join(file_name);
 
+    let encrypted_stored = fs::read(&stored_file_path).context("Failed to read stored env file")?;
+    let decrypted_content_bytes = security::decrypt(&encrypted_stored, passphrase)
+        .context("Failed to decrypt stored env file")?;
+
+    let new_content =
+        String::from_utf8(decrypted_content_bytes).context("Stored content is not valid UTF-8")?;
+
     if target_file_path.exists() {
         let old_content =
             fs::read_to_string(&target_file_path).context("Failed to read existing local file")?;
-
-        let encrypted_stored =
-            fs::read(&stored_file_path).context("Failed to read stored env file")?;
-        let new_content_bytes = security::decrypt(&encrypted_stored, passphrase)
-            .context("Failed to decrypt stored env file")?;
-        let new_content =
-            String::from_utf8(new_content_bytes).context("Stored content is not valid UTF-8")?;
 
         if old_content != new_content {
             println!("What you have now vs What you will have if you continue:");
@@ -127,13 +127,8 @@ pub fn set_env(project: &str, env: &str, force: bool, passphrase: &str) -> Resul
         }
     }
 
-    // For the actual operation, we just decrypt and write to target
-    // If we didn't do the check above, we still need to read/decrypt source
-    // But we might have already done it.
-    // Let's re-do or restructure. For simplicity: re-read/decrypt is safer than relying on scope.
-    let encrypted_stored = fs::read(&stored_file_path).context("Failed to read stored env file")?;
-    let decrypted_content = security::decrypt(&encrypted_stored, passphrase)?;
-    fs::write(&target_file_path, decrypted_content).context("Failed to write target env file")?;
+    fs::write(&target_file_path, new_content.as_bytes())
+        .context("Failed to write target env file")?;
     info!("{} set", env);
 
     Ok(())
@@ -204,7 +199,7 @@ pub fn list(project: Option<&str>) -> Result<()> {
 
     // Simple tree-like view
     println!("{}", search_root.display());
-    let _prefix_root = search_root.clone();
+    // Simple tree-like view
 
     for entry in WalkDir::new(&search_root)
         .min_depth(1)

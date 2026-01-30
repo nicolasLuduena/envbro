@@ -96,20 +96,40 @@ fn main() -> Result<()> {
             project,
             env,
             force,
-        } => commands::set_env(&project, &env, force, passphrase.unwrap())?,
+        } => commands::set_env(
+            &project,
+            &env,
+            force,
+            passphrase.expect("Passphrase required for set"),
+        )?,
         Commands::Register {
             project,
             env,
             path,
             force,
-        } => commands::register(&project, &env, &path, force, passphrase.unwrap())?,
+        } => commands::register(
+            &project,
+            &env,
+            &path,
+            force,
+            passphrase.expect("Passphrase required for register"),
+        )?,
         Commands::Rm {
             project,
             env,
             force,
-        } => commands::remove(&project, &env, force, passphrase.unwrap())?,
+        } => commands::remove(
+            &project,
+            &env,
+            force,
+            passphrase.expect("Passphrase required for rm"),
+        )?,
         Commands::List { project } => commands::list(project.as_deref())?,
-        Commands::Show { project, env } => commands::show(&project, &env, passphrase.unwrap())?,
+        Commands::Show { project, env } => commands::show(
+            &project,
+            &env,
+            passphrase.expect("Passphrase required for show"),
+        )?,
     }
 
     Ok(())
