@@ -2,6 +2,7 @@ use crate::security;
 use anyhow::{bail, Context, Result};
 use console::Style;
 use dialoguer::{theme::ColorfulTheme, Confirm};
+use secrecy::SecretString;
 use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ pub fn register(
     env: &str,
     target_path: &str,
     force: bool,
-    passphrase: &str,
+    passphrase: &SecretString,
 ) -> Result<()> {
     if env.contains('/') {
         bail!("Environment name cannot contain /");
@@ -77,7 +78,7 @@ pub fn register(
     Ok(())
 }
 
-pub fn set_env(project: &str, env: &str, force: bool, passphrase: &str) -> Result<()> {
+pub fn set_env(project: &str, env: &str, force: bool, passphrase: &SecretString) -> Result<()> {
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 
@@ -134,7 +135,7 @@ pub fn set_env(project: &str, env: &str, force: bool, passphrase: &str) -> Resul
     Ok(())
 }
 
-pub fn remove(project: &str, env: &str, force: bool, passphrase: &str) -> Result<()> {
+pub fn remove(project: &str, env: &str, force: bool, passphrase: &SecretString) -> Result<()> {
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 
@@ -216,7 +217,7 @@ pub fn list(project: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub fn show(project: &str, env: &str, passphrase: &str) -> Result<()> {
+pub fn show(project: &str, env: &str, passphrase: &SecretString) -> Result<()> {
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 

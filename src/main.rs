@@ -3,6 +3,7 @@ mod security;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use secrecy::SecretString;
 
 #[derive(Parser)]
 #[command(name = "envbro")]
@@ -78,18 +79,18 @@ fn main() -> Result<()> {
         Commands::List { .. } => None, // Not needed for listing
         _ => {
             if let Ok(p) = std::env::var("ENVBRO_PASSPHRASE") {
-                Some(p)
+                Some(SecretString::from(p))
             } else {
-                Some(
+                Some(SecretString::from(
                     dialoguer::Password::new()
                         .with_prompt("Passphrase")
                         .interact()?,
-                )
+                ))
             }
         }
     };
 
-    let passphrase = passphrase_input.as_deref();
+    let passphrase = passphrase_input.as_ref();
 
     match cli.command {
         Commands::Set {

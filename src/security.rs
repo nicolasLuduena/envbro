@@ -7,19 +7,20 @@ use argon2::{
     password_hash::{rand_core::RngCore, PasswordHasher, SaltString},
     Argon2,
 };
+use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroize;
 
 pub type Key = [u8; 32];
 
 /// Derives a 32-byte key from a passphrase and salt using Argon2.
-pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<Key> {
+pub fn derive_key(passphrase: &SecretString, salt: &[u8]) -> Result<Key> {
     let mut key = [0u8; 32];
     let argon2 = Argon2::default();
     let salt_string =
         SaltString::encode_b64(salt).map_err(|e| anyhow::anyhow!("Invalid salt: {}", e))?;
 
     let password_hash = argon2
-        .hash_password(passphrase.as_bytes(), &salt_string)
+        .hash_password(passphrase.expose_secret().as_bytes(), &salt_string)
         .map_err(|e| anyhow::anyhow!("Argon2 error: {}", e))?;
 
     let hash = password_hash
@@ -43,7 +44,7 @@ pub fn generate_salt() -> [u8; 16] {
 
 /// Encrypts data using AES-256-GCM.
 /// Returns a vector containing [SALT (16) | NONCE (12) | CIPHERTEXT + TAG].
-pub fn encrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+pub fn encrypt(data: &[u8], passphrase: &SecretString) -> Result<Vec<u8>> {
     let salt = generate_salt();
     let mut key = derive_key(passphrase, &salt)?;
 
@@ -67,7 +68,7 @@ pub fn encrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
 
 /// Decrypts data using AES-256-GCM.
 /// Expects data format: [SALT (16) | NONCE (12) | CIPHERTEXT + TAG]
-pub fn decrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+pub fn decrypt(data: &[u8], passphrase: &SecretString) -> Result<Vec<u8>> {
     if data.len() < 16 + 12 {
         return Err(anyhow::anyhow!("Data too short to contain salt and nonce"));
     }
@@ -95,24 +96,24 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt() {
-        let passphrase = "soy batman";
+        let passphrase = SecretString::from("soy batman");
         let data = b"secret data";
 
-        let encrypted = encrypt(data, passphrase).expect("Encryption failed");
+        let encrypted = encrypt(data, &passphrase).expect("Encryption failed");
         assert_ne!(data, encrypted.as_slice());
 
-        let decrypted = decrypt(&encrypted, passphrase).expect("Decryption failed");
+        let decrypted = decrypt(&encrypted, &passphrase).expect("Decryption failed");
         assert_eq!(data, decrypted.as_slice());
     }
 
     #[test]
     fn test_wrong_passphrase() {
-        let passphrase = "i'm batman";
+        let passphrase = SecretString::from("i'm batman");
         let data = b"secret data";
 
-        let encrypted = encrypt(data, passphrase).expect("Encryption failed");
+        let encrypted = encrypt(data, &passphrase).expect("Encryption failed");
 
-        let result = decrypt(&encrypted, "wrongpassword");
+        let result = decrypt(&encrypted, &SecretString::from("wrongpassword"));
         assert!(result.is_err());
     }
 }
