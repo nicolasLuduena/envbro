@@ -1,79 +1,47 @@
 ## Context
 We need a decentralized way to securely share encryption keys with authorized users.
-**Challenge**: How do I share a secret with "Bob" if Bob isn't online, without trusting a central server?
-**Solution**: The "Inbox" Pattern (Signal-on-Chain). We use Midnight to store *Encrypted Keys* (Inboxes) and verify *Identity*.
+**Challenge**: How do I share a 32-byte secret with "Bob" privately, cheaply, and with auditability?
+**Solution**: **Zswap Secret Field Abuse**. We use Midnight's native shielded value transfer to carry the secret payload.
 
 ## Architecture Flow
-The blockchain acts as a **Shielded Key Exchange**. We use ZK Circuits to prove identity without revealing the underlying wallet address.
 
-**The Secret**: A symmetric key (`VaultKey`) that decrypts the Hypercore data.
-**The Goal**: Securely send `VaultKey` from Alice to Bob using a **Privacy-Preserving Identifier** (Shielded Address / ZK-Commitment).
+The blockchain acts as a **Token-Gated Key Distribution System**.
 
-## client vs. Chain Responsibilities
-**Crucial Distinction**: The expensive cryptographic math (ECC, Encryption, Decryption) happens on the **CLIENT** (Alice/Bob's machine). The Chain is just a verified storage layer.
+1.  **The Secret**: `ProjectKey` (32 bytes).
+2.  **The Vehicle**: A Zswap Shielded Output.
+3.  **The Payload**: The `nonce` field of the `CoinInfo` struct (32 bytes).
 
-| Component | Responsibility (Where it runs) | Logic |
+### The "EnvAccess" Protocol
+
+Unlike a standard transfer, here the **value is 0** but the **metadata is valuable**.
+
+| Component | Responsibility | Logic |
 | :--- | :--- | :--- |
-| **Bob's Client** | **Key Generation** (Off-chain) | Generates Secret ($s$) and Public ($P$). |
-| **Midnight Contract** | **Identity Registry** (On-chain ZK) | **Verifies $P = s \cdot G$**. Use ZK to prove Bob *knows* $s$ without revealing it. |
-| **Alice's Client** | **Encryption** (Off-chain) | Fetches $P$, generates ephemeral ($r$), calculates $S = r \cdot P$. Encrypts data. |
-| **Midnight Contract** | **Inbox Storage** (On-chain) | Stores the Encrypted Blob and Ephemeral Key ($R$). No calculation needed. |
-| **Bob's Client** | **Decryption** (Off-chain) | Fetches Blob + $R$. Calculates $S = s \cdot R$. Decrypts. |
+| **Alice's Client** | **Key Packaging** | Encrypts `ProjectKey` into the `nonce` field of a shielded output destined for Bob (or a Token Contract). |
+| **Midnight Network** | **Transport** | Validators verify ZK proof and store ciphertext. Validators DO NOT see the key. |
+| **Bob's Client** | **Key Extraction** | Scans chain, identifies output, decrypts `nonce` to recover `ProjectKey`. |
 
-### The Value of the Smart Contract (ZK PoK)
-You asked: *"If the contract doesn't verify anything, isn't it just a dictionary?"*
-**Answer**: Yes! That's why the **Registration Step** MUST be verified in the Circuit.
+## Smart Contract Role: "The Gatekeeper"
 
-**The Circuit Logic (`ProveIdentity`)**:
--   **Private Input**: $s$ (Bob's Secret)
--   **Public Input**: $P$ (Bob's Public Key)
--   **Verification**:
-    1.  Assert $P == s \cdot G$ (ECC Scalar Multiplication).
-    2.  This proves "I own the private key for $P$" (Proof of Knowledge).
-    3.  *Bonus*: You can bind this to a DID or NFT ("I own $P$ AND I own NFT #123").
+While Alice *can* send the key directly to Bob (P2P Handshake), we want **Governed Access** (IAM).
+**The Policy Contract**:
+-   **State**: Maintains a list of "Allow Policies" (e.g., "Must confirm email via Oracle", "Must pay 10 NIGHT").
+-   **Action**:
+    -   Bob interacts with Contract to prove eligibility (ZK Proof).
+    -   Contract (or Alice's listening bot) mints/sends the "Key Token" to Bob.
 
-**Feasibility**: Midnight uses **Pallas/Vesta** curves (Halo2). ECC Multiplication is a **native, efficient operation** in these proof systems. It is NOT "expensive" in the validation sense—it's exactly what ZK circuits are designed to do efficiently.
-
-### How Decryption Works (The "Stealth Address" Pattern)
-Bob's "ZK-ID" effectively acts as a **Public Key**.
-1.  **Bob's Keys**: Bob has a Secret Spending Key ($s$) and a Public Viewing Key ($P = s \cdot G$).
-2.  **Encryption (Alice)**:
-    -   Alice generates a random ephemeral key ($r$).
-    -   Alice computes a **Shared Secret** using Diffie-Hellman: $S = r \cdot P$ (which is equal to $r \cdot s \cdot G$).
-    -   Alice effectively creates a "One-Time Address" for this message.
-    -   Alice encrypts the `VaultKey` using $S$.
-3.  **Decryption (Bob)**:
-    -   Bob sees Alice's ephemeral public key ($R = r \cdot G$).
-    -   Bob computes the SAME shared secret: $S' = s \cdot R$ (which is $s \cdot r \cdot G$).
-    -   Since $S == S'$, Bob can decrypt the message.
-    -   *Crucially*: Only Bob (who knows $s$) can compute $S$. To everyone else, including the chain, it looks like random noise.
+> [!IMPORTANT]
+> **External Authorization**: We can introduce a centralized "Approval Bot" that provides a final go-ahead based on external system triggers (e.g., enterprise IAM or off-chain compliance checks) before the contract finalizes the key distribution.
 
 > [!NOTE]
-> **Future Consideration (Quantum Safety)**: Standard ECDH is vulnerable to future quantum computers. In the long term, we may consider switching to **ML-KEM (Kyber)**, though this introduces larger key sizes (~1KB vs 32 bytes) which complicates on-chain storage.
-
-### Future Research: Proxy Re-Encryption (PRE)
-What if we use a shielded token to control access to the vault key?
-Anyone with it could use its secure type to decrypt the vault key. Basically the token would be the vault key.
-> [!WARNING]
-> **Out of Scope**: This feature is NOT part of the current Milestone 3. It is listed here solely for future scalability research.
-
-**The Problem**: Currently, Alice must manually encrypt the `VaultKey` for *every* new user ($O(N)$ work).
-**The Solution**: **Proxy Re-Encryption (PRE)** (e.g., NuCypher / Threshold).
-
-1.  **Alice** encrypts the `VaultKey` *once* for the "Contract/Network".
-2.  **Alice** creates a "Policy": "Anyone with NFT #123 can access".
-3.  **Bob** (who has NFT #123) requests access.
-4.  **The Network** (authorized via ZK) transforms Alice's ciphertext into a format Bob can decrypt using his own Private Key.
-5.  **Result**: Alice is offline; Bob gets access; The Network never sees the plaintext key.
-
+> Since the Contract itself cannot hold the *plaintext* key to mint new outputs with it (privacy leak), the actual **Broadcasting of the Key** still effectively comes from Alice (or a Keeper bot) that listens to the contract's "Approval" event.
+>
+> **Flow**:
+> 1. Bob -> Contract: "I am eligible."
+> 2. Contract -> Event: "Bob Approved."
+> 3. Alice's Node (listening) -> Bob: Sends Shielded Output with Key.
 
 ## Revised Requirements
--   **ZK-Identity**: Use a ZK-Circuit to generate a stable *Public Identifier* that does **not** link back to the user's wallet address or transaction history.
--   **Stealth Inbox**: Messages sent to this identifier should not look linkable on-chain (observers shouldn't know Alice is talking to Bob).
-
-
-
-
-
-## Notes
-- Start simple: Policy = "List of allowed public keys".
+-   **Key Size**: Must fit in 32 bytes (AES-256). verified.
+-   **Encryption**: Uses Midnight's native ElGamal-on-JubJub.
+-   **Audit**: Ledger records *that* a transfer happened, but not *what* was transferred.
