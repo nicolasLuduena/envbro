@@ -25,11 +25,9 @@ fn test_register_and_list() {
         .stderr(predicate::str::contains("New env stored"));
 
     // Verify it exists in the store
-    let stored_file = temp_dir.path().join("myproject/prod/.env.test");
-    assert!(stored_file.exists());
-    let content = fs::read(&stored_file).unwrap();
-    // Should NOT be plain text
-    assert_ne!(content, b"FOO=bar");
+    // With Iroh, we check for the metadata file
+    let stored_meta = temp_dir.path().join("myproject/prod/iroh.json");
+    assert!(stored_meta.exists());
 
     // Test List
     let mut cmd_list = Command::new(env!("CARGO_BIN_EXE_envbro"));
@@ -76,9 +74,10 @@ fn test_set() {
         .stderr(predicate::str::contains("dev set"));
 
     // Verify file copied to CWD and is decrypted
-    let target = cwd.path().join("source.env"); // register uses filename
+    // The command always writes to ".env"
+    let target = cwd.path().join(".env");
     assert!(target.exists());
-    assert_eq!(fs::read_to_string(target).unwrap(), "SECRET=123");
+    assert_eq!(fs::read_to_string(target).unwrap(), "SECRET=123\n");
 }
 
 #[test]
@@ -151,4 +150,86 @@ fn test_remove() {
     assert!(!temp_dir.path().join("myproject/test").exists());
     // Also verify project dir removed since it was empty
     assert!(!temp_dir.path().join("myproject").exists());
+}
+
+#[test]
+fn test_register_update_needs_force() {
+    let temp_dir = tempdir().unwrap();
+    let root = temp_dir.path().to_str().unwrap();
+    let env_src = temp_dir.path().join("dup.env");
+    fs::write(&env_src, "A=B").unwrap();
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
+    cmd.env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "pass")
+        .arg("register")
+        .arg("dup_proj")
+        .arg("dev")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .success();
+
+    // Change content to trigger diff
+    fs::write(&env_src, "A=C").unwrap();
+
+    // Try again without force - should try to prompt and fail (no tty)
+    let mut cmd2 = Command::new(env!("CARGO_BIN_EXE_envbro"));
+    cmd2.env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "pass")
+        .arg("register")
+        .arg("dup_proj")
+        .arg("dev")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_wrong_passphrase_on_show() {
+    let temp_dir = tempdir().unwrap();
+    let root = temp_dir.path().to_str().unwrap();
+    let env_src = temp_dir.path().join("secret.env");
+    fs::write(&env_src, "SECRET=Batman").unwrap();
+
+    // Register with "correct"
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "correct")
+        .arg("register")
+        .arg("sec_proj")
+        .arg("prod")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .success();
+
+    // Show with "wrong"
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "wrong")
+        .arg("show")
+        .arg("sec_proj")
+        .arg("prod")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Key unwrap failed"));
+}
+
+#[test]
+fn test_missing_source_file() {
+    let temp_dir = tempdir().unwrap();
+    let root = temp_dir.path().to_str().unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "pass")
+        .arg("register")
+        .arg("missing_proj")
+        .arg("dev")
+        .arg("--path")
+        .arg("/this/path/does/not/exist/hopefully")
+        .assert()
+        .failure();
 }

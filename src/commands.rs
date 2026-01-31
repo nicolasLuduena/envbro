@@ -1,10 +1,10 @@
 use crate::security;
+use crate::store::{iroh::IrohStore, Store};
 use anyhow::{bail, Context, Result};
 use console::Style;
 use dialoguer::{theme::ColorfulTheme, Confirm};
 use secrecy::SecretString;
 use similar::{ChangeTag, TextDiff};
-use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use walkdir::WalkDir;
@@ -18,7 +18,7 @@ fn get_store_path() -> Result<PathBuf> {
     Ok(home.join(".envbro"))
 }
 
-pub fn register(
+pub async fn register(
     project: &str,
     env: &str,
     target_path: &str,
@@ -30,36 +30,155 @@ pub fn register(
     }
 
     let target_path = Path::new(target_path);
-    if !target_path.exists() || !target_path.is_file() {
-        bail!("Target file doesn't exist or is not a file");
+    if !tokio::fs::try_exists(target_path).await? {
+        bail!("Target path doesn't exist");
+    }
+    if !tokio::fs::metadata(target_path).await?.is_file() {
+        bail!("Target path must be a file");
     }
 
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
+    let mut store = IrohStore::new().await?;
+    let is_update;
+    let project_key;
 
-    // Create directory
-    fs::create_dir_all(&env_path).context("Failed to create env directory")?;
+    // 1. Initialization / Key Retrieval
+    if store.is_initialized(project, env).await {
+        // Retrieve and Unwrap Project Key
+        let (key_enc, key_salt) = store
+            .get_project_key_meta(project, env)
+            .await?
+            .context("Failed to get project key meta")?;
 
-    let file_name = target_path.file_name().context("Invalid target filename")?;
-    let stored_env_path = env_path.join(file_name);
+        project_key = security::decrypt_project_key(&key_enc, &key_salt, passphrase)
+            .context("Failed to decrypt project key (passphrase mismatch?)")?;
+        is_update = true;
+    } else {
+        // Initialize New
+        project_key = security::generate_project_key();
+        let (key_enc, key_salt) = security::encrypt_project_key(&project_key, passphrase)?;
 
-    // Check existing
-    if stored_env_path.exists() {
-        let encrypted_content =
-            fs::read(&stored_env_path).context("Failed to read existing stored env")?;
-        let old_content_bytes = security::decrypt(&encrypted_content, passphrase)
-            .context("Failed to decrypt existing env file")?;
-        let old_content =
-            String::from_utf8(old_content_bytes).context("Stored content is not valid UTF-8")?;
-        let new_content = fs::read_to_string(target_path).context("Failed to read target file")?;
+        store.init_env(project, env, key_enc, key_salt).await?;
+        info!("Initialized new environment {}/{}", project, env);
+        is_update = false;
+    }
 
+    // Read target file content once for comparison and storing
+    let new_env_content = tokio::fs::read(target_path).await?;
+
+    // 2. Check existing variables (Differential Update)
+    if is_update {
+        let current_vars = store.list_env_vars(project, env).await?;
+        let mut old_content = String::new();
+
+        if !current_vars.is_empty() {
+            let mut sorted_vars = current_vars;
+            sorted_vars.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (key, val_enc) in sorted_vars {
+                let val_dec = security::decrypt(&val_enc, &project_key)
+                    .context("Failed to decrypt existing variable (corrupted?)")?;
+                let val_str =
+                    String::from_utf8(val_dec).context("Invalid UTF-8 in stored value")?;
+                old_content.push_str(&format!("{}={}\n", key, val_str));
+            }
+
+            let new_vars_iter = dotenvy::from_read_iter(std::io::Cursor::new(&new_env_content));
+            let mut new_content_clean = String::new();
+            for item in new_vars_iter {
+                let (k, v) = item?;
+                new_content_clean.push_str(&format!("{}={}\n", k, v));
+            }
+
+            if old_content != new_content_clean {
+                println!(
+                    "Changes detected (Note: Comments and formatting are not preserved in storage):"
+                );
+                print_diff(&old_content, &new_content_clean);
+
+                if !force
+                    && !Confirm::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Are you sure you want to update the stored environment?")
+                        .interact()?
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // 3. Write new variables
+    let new_vars_iter = dotenvy::from_read_iter(std::io::Cursor::new(&new_env_content));
+    let mut batch_entries = Vec::new();
+
+    for item in new_vars_iter {
+        let (key, value) = item?;
+        // Fast Encryption using Project Key
+        let encrypted = security::encrypt(value.as_bytes(), &project_key)?;
+        batch_entries.push((key, encrypted));
+    }
+
+    if !batch_entries.is_empty() {
+        store.set_env_vars(project, env, batch_entries).await?;
+    }
+
+    info!("New env stored in Iroh Doc");
+    store.shutdown().await?;
+
+    Ok(())
+}
+
+pub async fn set_env(
+    project: &str,
+    env: &str,
+    force: bool,
+    passphrase: &SecretString,
+) -> Result<()> {
+    let mut store = IrohStore::new().await?;
+
+    // 1. Get Key
+    if !store.is_initialized(project, env).await {
+        warn!("Env does not exist");
+        return Ok(());
+    }
+
+    let (key_enc, key_salt) = store
+        .get_project_key_meta(project, env)
+        .await?
+        .context("Failed to get project key meta")?;
+
+    let project_key = security::decrypt_project_key(&key_enc, &key_salt, passphrase)
+        .context("Failed to decrypt project key (passphrase mismatch?)")?;
+
+    // 2. List variables
+    let current_vars = store.list_env_vars(project, env).await?;
+    if current_vars.is_empty() {
+        warn!("Env is empty");
+        return Ok(());
+    }
+
+    let mut sorted_vars = current_vars;
+    sorted_vars.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut new_content = String::new();
+    for (key, val_enc) in sorted_vars {
+        let val_dec = security::decrypt(&val_enc, &project_key)?;
+        let val_str = String::from_utf8(val_dec)?;
+        new_content.push_str(&format!("{}={}\n", key, val_str));
+    }
+
+    // Target file: .env in current directory?
+    let target_filename = ".env";
+    let target_file_path = std::env::current_dir()?.join(target_filename);
+
+    if tokio::fs::try_exists(&target_file_path).await? {
+        let old_content = tokio::fs::read_to_string(&target_file_path).await?;
         if old_content != new_content {
-            println!("What you have stored now vs What will be stored if you continue:");
+            println!("Local .env differs from stored env:");
             print_diff(&old_content, &new_content);
 
             if !force
                 && !Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Are you sure you want to change the stored env?")
+                    .with_prompt("Overwrite local .env?")
                     .interact()?
             {
                 return Ok(());
@@ -67,125 +186,72 @@ pub fn register(
         }
     }
 
-    let new_content_bytes = fs::read(target_path).context("Failed to read target file")?;
-    // Verify it is UTF-8 to ensure we are encrypting text (optional but good sanity check since we treat it as env vars)
-    let _ = std::str::from_utf8(&new_content_bytes).context("Target file is not valid UTF-8")?;
-
-    let encrypted = security::encrypt(&new_content_bytes, passphrase)?;
-    fs::write(stored_env_path, encrypted).context("Failed to write encrypted env file")?;
-    info!("New env stored");
+    tokio::fs::write(&target_file_path, new_content).await?;
+    info!("{} set to .env", env);
 
     Ok(())
 }
 
-pub fn set_env(project: &str, env: &str, force: bool, passphrase: &SecretString) -> Result<()> {
+pub async fn remove(
+    project: &str,
+    env: &str,
+    force: bool,
+    passphrase: &SecretString,
+) -> Result<()> {
+    // Current implementation removes directory.
     let store_root = get_store_path()?;
     let env_path = store_root.join(project).join(env);
 
-    if !env_path.exists() || !env_path.is_dir() {
+    let mut store = IrohStore::new().await?;
+
+    if !store.is_initialized(project, env).await {
         warn!("Env does not exist");
         return Ok(());
     }
 
-    // Find the first file in the directory (assuming one env file per env folder)
-    let mut entries = fs::read_dir(&env_path)?;
-    let entry = match entries.next() {
-        Some(Ok(e)) => e,
-        _ => {
-            warn!("Env directory is empty");
+    // Verify Passphrase (Authentication)
+    // We shouldn't allow deleting an environment if we can't unlock it.
+    let (key_enc, key_salt) = store
+        .get_project_key_meta(project, env)
+        .await?
+        .context("Failed to read environment metadata")?;
+
+    // This will error if the passphrase is incorrect
+    security::decrypt_project_key(&key_enc, &key_salt, passphrase)
+        .context("Authentication failed: Invalid passphrase")?;
+
+    if !force {
+        let vars = store.list_env_vars(project, env).await?;
+        let count = vars.len();
+
+        if !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!(
+                "Are you sure you want to remove env '{}' ({} variables)?",
+                env, count
+            ))
+            .interact()?
+        {
             return Ok(());
         }
-    };
-
-    let stored_file_path = entry.path();
-    let file_name = stored_file_path
-        .file_name()
-        .context("Invalid stored filename")?;
-    let target_file_path = std::env::current_dir()?.join(file_name);
-
-    let encrypted_stored = fs::read(&stored_file_path).context("Failed to read stored env file")?;
-    let decrypted_content_bytes = security::decrypt(&encrypted_stored, passphrase)
-        .context("Failed to decrypt stored env file")?;
-
-    let new_content =
-        String::from_utf8(decrypted_content_bytes).context("Stored content is not valid UTF-8")?;
-
-    if target_file_path.exists() {
-        let old_content =
-            fs::read_to_string(&target_file_path).context("Failed to read existing local file")?;
-
-        if old_content != new_content {
-            println!("What you have now vs What you will have if you continue:");
-            print_diff(&old_content, &new_content);
-
-            if !force
-                && !Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Are you sure you want to change the env you have right now?")
-                    .interact()?
-            {
-                return Ok(());
-            }
-        }
     }
 
-    fs::write(&target_file_path, new_content.as_bytes())
-        .context("Failed to write target env file")?;
-    info!("{} set", env);
-
-    Ok(())
-}
-
-pub fn remove(project: &str, env: &str, force: bool, passphrase: &SecretString) -> Result<()> {
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
-
-    if !env_path.exists() || !env_path.is_dir() {
-        warn!("Env does not exist");
-        return Ok(());
-    }
-
-    let mut entries = fs::read_dir(&env_path)?;
-    if let Some(Ok(entry)) = entries.next() {
-        let encrypted_content = fs::read(entry.path()).context("Failed to read env file")?;
-        let content_bytes = security::decrypt(&encrypted_content, passphrase)
-            .context("Failed to decrypt env file for confirmation")?;
-        let content = String::from_utf8_lossy(&content_bytes);
-
-        if !force {
-            if !Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!(
-                    "Are you sure you want to remove this?:\n\n{}",
-                    content
-                ))
-                .interact()?
-            {
-                return Ok(());
-            }
-
-            if !Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt("Are you sure? (Final confirmation)")
-                .interact()?
-            {
-                return Ok(());
-            }
-        }
-    }
-
-    fs::remove_dir_all(&env_path).context("Failed to remove env directory")?;
+    tokio::fs::remove_dir_all(&env_path)
+        .await
+        .context("Failed to remove env directory")?;
     info!("Removed env: {}", env);
 
     // Cleanup project dir if empty
     let project_path = store_root.join(project);
-    if let Ok(entries) = fs::read_dir(&project_path) {
-        if entries.count() == 0 {
-            fs::remove_dir(&project_path).ok(); // Ignore if fails
+    if let Ok(mut entries) = tokio::fs::read_dir(&project_path).await {
+        if entries.next_entry().await.ok().flatten().is_none() {
+            tokio::fs::remove_dir(&project_path).await.ok();
         }
     }
 
     Ok(())
 }
 
-pub fn list(project: Option<&str>) -> Result<()> {
+pub async fn list(project: Option<&str>) -> Result<()> {
     let store_root = get_store_path()?;
     let search_root = if let Some(p) = project {
         store_root.join(p)
@@ -193,14 +259,12 @@ pub fn list(project: Option<&str>) -> Result<()> {
         store_root
     };
 
-    if !search_root.exists() {
+    if !tokio::fs::try_exists(&search_root).await? {
         println!("No environments found.");
         return Ok(());
     }
 
-    // Simple tree-like view
     println!("{}", search_root.display());
-    // Simple tree-like view
 
     for entry in WalkDir::new(&search_root)
         .min_depth(1)
@@ -217,31 +281,42 @@ pub fn list(project: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub fn show(project: &str, env: &str, passphrase: &SecretString) -> Result<()> {
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
+pub async fn show(project: &str, env: &str, passphrase: &SecretString) -> Result<()> {
+    let mut store = IrohStore::new().await?;
 
-    if !env_path.exists() || !env_path.is_dir() {
-        bail!("Project environment does not exist");
+    if !store.is_initialized(project, env).await {
+        bail!("Environment does not exist");
     }
 
-    let mut entries = fs::read_dir(&env_path)?;
-    match entries.next() {
-        Some(Ok(entry)) => {
-            let encrypted_content = fs::read(entry.path()).context("Failed to read env file")?;
-            let content_bytes = security::decrypt(&encrypted_content, passphrase)?;
-            let content = String::from_utf8_lossy(&content_bytes);
-            println!("{}", content);
-        }
-        _ => {
-            bail!("Environment directory is empty");
-        }
+    // 1. Get Key
+    let (key_enc, key_salt) = store
+        .get_project_key_meta(project, env)
+        .await?
+        .context("Failed to get project key meta")?;
+
+    let project_key = security::decrypt_project_key(&key_enc, &key_salt, passphrase)
+        .context("Failed to decrypt project key (passphrase mismatch?)")?;
+
+    // 2. Encrypt/Decrypt
+    let vars = store.list_env_vars(project, env).await?;
+
+    if vars.is_empty() {
+        bail!("Environment is empty");
+    }
+
+    let mut sorted_vars = vars;
+    sorted_vars.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (key, val_enc) in sorted_vars {
+        let val_dec = security::decrypt(&val_enc, &project_key)?;
+        let val_str = String::from_utf8_lossy(&val_dec);
+        println!("{}={}", key, val_str);
     }
 
     Ok(())
 }
 
-// Helper to show diff
+// Helper query
 fn print_diff(old: &str, new: &str) {
     let diff = TextDiff::from_lines(old, new);
     for change in diff.iter_all_changes() {
