@@ -8,7 +8,7 @@ use iroh::Endpoint;
 use iroh_blobs::downloader::DownloadRequest;
 use iroh_blobs::net_protocol::Blobs;
 use iroh_blobs::store::fs::Store as FsStore;
-use iroh_blobs::store::{Map, MapEntry, Store};
+use iroh_blobs::store::{Map, MapEntry};
 use iroh_blobs::ticket::BlobTicket;
 use iroh_blobs::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
@@ -22,24 +22,18 @@ pub struct IrohNetwork {
 impl IrohNetwork {
     /// Create and spawn a new Iroh node with the given blob store.
     pub async fn spawn(store: FsStore) -> Result<Self> {
-        // TODO: add possibility of using owner's infra
-        let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+        // Enable both n0 discovery (for internet) and local network discovery (for local testing)
+        let endpoint = Endpoint::builder()
+            .discovery_n0()
+            .discovery_local_network()
+            .bind()
+            .await?;
         let blobs = Blobs::builder(store).build(&endpoint);
         let router = Router::builder(endpoint)
             .accept(iroh_blobs::ALPN, blobs.clone())
             .spawn();
 
         Ok(Self { router, blobs })
-    }
-
-    /// Get a reference to the blobs protocol handler.
-    pub fn blobs(&self) -> &Blobs<FsStore> {
-        &self.blobs
-    }
-
-    /// Get a reference to the underlying store.
-    pub fn store(&self) -> &FsStore {
-        self.blobs.store()
     }
 }
 
