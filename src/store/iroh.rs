@@ -174,3 +174,23 @@ impl Store for IrohStore {
             .unwrap_or_default())
     }
 }
+
+impl IrohStore {
+    /// Get the hash for a specific project/env combination.
+    pub async fn get_hash(&self, project: &str, env: &str) -> Result<Hash> {
+        let manifest = self.manifest.lock().await;
+        let hash_str = manifest
+            .projects
+            .get(project)
+            .and_then(|envs| envs.get(env))
+            .map(|entry| entry.hash.clone())
+            .context("Environment not found in manifest")?;
+
+        Hash::from_str(&hash_str).context("Invalid hash in manifest")
+    }
+
+    /// Get a clone of the underlying FsStore for network operations.
+    pub fn get_store_clone(&self) -> FsStore {
+        self.store.clone()
+    }
+}
