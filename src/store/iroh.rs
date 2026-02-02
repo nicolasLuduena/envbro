@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::sync::Mutex;
+use tracing::warn;
 
 const MANIFEST_FILE: &str = "manifest.json";
 const IROH_DATA_DIR: &str = "iroh-data";
@@ -59,7 +60,31 @@ impl IrohStore {
     async fn save_manifest(&self) -> Result<()> {
         let manifest = self.manifest.lock().await;
         let content = serde_json::to_string_pretty(&*manifest)?;
-        tokio::fs::write(&self.manifest_path, content).await?;
+
+        // Atomic write strategy:
+        // 1. Write to a temporary file
+        // 2. Backup existing file (if any)
+        // 3. Rename temporary file to target file
+
+        let tmp_path = self.manifest_path.with_extension("tmp");
+        let backup_path = self.manifest_path.with_extension("bak");
+
+        // 1. Write to temp file
+        tokio::fs::write(&tmp_path, &content)
+            .await
+            .context("Failed to write manifest to temp file")?;
+
+        // 2. Backup existing (ignore error if it doesn't exist, but log others)
+        if self.manifest_path.exists() {
+            if let Err(e) = tokio::fs::copy(&self.manifest_path, &backup_path).await {
+                warn!("Failed to create manifest backup: {}", e);
+            }
+        }
+
+        // 3. Atomic rename (POSIX atomic, Windows atomic-ish)
+        tokio::fs::rename(&tmp_path, &self.manifest_path)
+            .await
+            .context("Failed to rename temp manifest to target")?;
         Ok(())
     }
 }
