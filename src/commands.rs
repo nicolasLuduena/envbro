@@ -1,6 +1,5 @@
-use crate::network::Network;
 use crate::security;
-use crate::store::Store;
+use crate::store::{SharableStore, Store};
 use anyhow::{bail, Context, Result};
 use console::Style;
 use dialoguer::{theme::ColorfulTheme, Confirm};
@@ -59,7 +58,7 @@ pub struct ShareArgs<'a> {
 pub async fn register(
     args: RegisterArgs<'_>,
     source: RegisterSource,
-    store: &crate::store::iroh::IrohStore,
+    store: &impl Store,
 ) -> Result<()> {
     if args.env.contains('/') {
         bail!("Environment name cannot contain /");
@@ -94,39 +93,11 @@ pub async fn register(
         }
         RegisterSource::Remote { ticket, filename } => {
             // Remote registration: download from P2P
-            use crate::network::{IrohNetwork, Network};
-            use iroh_blobs::store::fs::Store as FsStore;
-            use tempfile::TempDir;
-
             let filename = filename.unwrap_or_else(|| ".env".to_string());
 
-            info!("Connecting to peer and downloading environment...");
-
-            // Create a temporary store for the download operation
-            // This avoids conflicts with the main store when shutting down the network
-            let temp_dir = TempDir::new().context("Failed to create temp directory")?;
-            let temp_store = FsStore::load(temp_dir.path())
-                .await
-                .context("Failed to create temporary store")?;
-
-            // Initialize network with temporary store and download the blob
-            let network = IrohNetwork::spawn(temp_store).await?;
-            let result = network.connect_and_download(&ticket).await;
-
-            // Cleanup network regardless of result
-            let shutdown_result = Box::new(network).shutdown().await;
-
-            // Return download error first if it exists
-            let (hash, encrypted_bytes) = result?;
+            let (hash, encrypted_bytes) = crate::network::fetch_from_ticket(&ticket).await?;
 
             info!("Downloaded blob with hash: {}", hash);
-
-            // Then return shutdown error if it exists
-            if let Err(e) = shutdown_result {
-                warn!("Network shutdown error (non-fatal): {:#}", e);
-            }
-
-            // temp_dir will be automatically cleaned up when dropped
 
             (filename, encrypted_bytes)
         }
@@ -310,17 +281,12 @@ pub async fn show(args: ShowArgs<'_>, store: &impl Store) -> Result<()> {
     Ok(())
 }
 
-pub async fn share(args: ShareArgs<'_>, store: &crate::store::iroh::IrohStore) -> Result<()> {
-    use crate::network::IrohNetwork;
-
+pub async fn share(args: ShareArgs<'_>, store: &impl SharableStore) -> Result<()> {
     // Get the hash for this environment
     let hash = store.get_hash(args.project, args.env).await?;
 
     // Create network node with shared store
-    let network = IrohNetwork::spawn(store.get_store_clone()).await?;
-
-    // Generate ticket
-    let ticket = network.share(hash).await?;
+    let (ticket, network) = store.start_share_session(&hash).await?;
 
     info!("Sharing environment: {}/{}", args.project, args.env);
     println!("\nTo clone this environment, run:");
@@ -336,7 +302,7 @@ pub async fn share(args: ShareArgs<'_>, store: &crate::store::iroh::IrohStore) -
         .context("Failed to listen for Ctrl+C")?;
 
     info!("Shutting down...");
-    Box::new(network).shutdown().await?;
+    network.shutdown().await?;
 
     Ok(())
 }

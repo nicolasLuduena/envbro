@@ -17,5 +17,19 @@ pub trait Store: Send + Sync {
     async fn list_projects(&self) -> Result<Vec<String>>;
 
     /// Lists all environments for a given project.
+    /// Lists all environments for a given project.
     async fn list_envs(&self, project: &str) -> Result<Vec<String>>;
+
+    /// Gets the content hash/ID for a specific project/env (if applicable).
+    async fn get_hash(&self, project: &str, env: &str) -> Result<String>;
+}
+
+#[async_trait::async_trait]
+pub trait SharableStore: Store {
+    /// Starts a P2P share session for the given hash.
+    /// Returns a ticket string and a handle to the network node (which implies the session lifetime).
+    async fn start_share_session(
+        &self,
+        hash: &str,
+    ) -> Result<(String, Box<dyn crate::network::Network>)>;
 }

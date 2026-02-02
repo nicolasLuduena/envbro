@@ -1,4 +1,5 @@
-use super::Store;
+use super::{SharableStore, Store};
+use crate::network::{IrohNetwork, Network};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use iroh_blobs::store::fs::Store as FsStore;
@@ -242,24 +243,36 @@ impl Store for IrohStore {
             .map(|envs| envs.keys().cloned().collect())
             .unwrap_or_default())
     }
-}
 
-impl IrohStore {
-    /// Get the hash for a specific project/env combination.
-    pub async fn get_hash(&self, project: &str, env: &str) -> Result<Hash> {
+    async fn get_hash(&self, project: &str, env: &str) -> Result<String> {
         let manifest = self.manifest.lock().await;
-        let hash_str = manifest
+        manifest
             .projects
             .get(project)
             .and_then(|envs| envs.get(env))
             .map(|entry| entry.hash.clone())
-            .context("Environment not found in manifest")?;
-
-        Hash::from_str(&hash_str).context("Invalid hash in manifest")
+            .context("Environment not found in manifest")
     }
+}
 
-    /// Get a clone of the underlying FsStore for network operations.
-    pub fn get_store_clone(&self) -> FsStore {
-        self.store.clone()
+#[async_trait]
+impl SharableStore for IrohStore {
+    async fn start_share_session(
+        &self,
+        hash: &str,
+    ) -> Result<(String, Box<dyn crate::network::Network>)> {
+        // Create network node with shared store
+        // We clone the store handle, which is cheap (Arc internally)
+        let network = IrohNetwork::spawn(self.store.clone()).await?;
+        let hash = Hash::from_str(hash)?;
+
+        // Generate ticket
+        let ticket = network.share(hash).await?;
+        Ok((ticket, Box::new(network)))
     }
+}
+
+impl IrohStore {
+    // get_hash implementation removed in favor of trait implementation
+    // get_store_clone removed as it is no longer needed publicly
 }
