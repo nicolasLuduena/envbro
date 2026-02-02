@@ -8,11 +8,10 @@ We will move away from storing plain text files in `~/.envbro` and instead use *
 ## Deliverables
 - [ ] **Secure Storage**: All data at rest is encrypted.
 - [ ] **Iroh Integration**: Use Iroh Blobs for storing environment data.
-- [ ] **Disaster Recovery**: Ability to export/import master keys (Mnemonic/Paper Key).
 
 ## Issues
 | Issue | Description |
 |Args|Args|
 | [ISSUE-1](./issues/1-implement-encryption.md) | Implement AES-256-GCM Encryption for Local Storage |
 | [ISSUE-2](./issues/2-integrate-iroh.md) | Integrate Iroh for Storage & Transfer |
-| [ISSUE-4](./issues/4-key-backup.md) | Implement Key Export & Paper Backup |
+| [ISSUE-4](./issues/4-key-backup.md) | Implement Key Export & Paper Backup (Deferred) |
