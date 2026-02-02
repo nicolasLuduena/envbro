@@ -64,6 +64,13 @@ enum Commands {
         /// Environment name
         env: String,
     },
+    /// Shares an environment via P2P
+    Share {
+        /// Project name
+        project: String,
+        /// Environment name
+        env: String,
+    },
 }
 
 #[tokio::main]
@@ -82,7 +89,7 @@ async fn main() -> Result<()> {
     let store = crate::store::iroh::IrohStore::new().await?;
 
     let passphrase_input = match &cli.command {
-        Commands::List { .. } => None, // Not needed for listing
+        Commands::List { .. } | Commands::Share { .. } => None, // Not needed for listing or sharing
         _ => {
             if let Ok(p) = std::env::var("ENVBRO_PASSPHRASE") {
                 Some(SecretString::from(p))
@@ -153,6 +160,7 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+        Commands::Share { project, env } => commands::share(&project, &env, &store).await?,
     }
 
     Ok(())

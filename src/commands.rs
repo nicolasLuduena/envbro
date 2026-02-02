@@ -1,3 +1,4 @@
+use crate::network::Network;
 use crate::security;
 use crate::store::Store;
 use anyhow::{bail, Context, Result};
@@ -197,6 +198,34 @@ pub async fn show(
             bail!("Environment not found");
         }
     }
+
+    Ok(())
+}
+
+pub async fn share(project: &str, env: &str, store: &crate::store::iroh::IrohStore) -> Result<()> {
+    use crate::network::IrohNetwork;
+
+    // Get the hash for this environment
+    let hash = store.get_hash(project, env).await?;
+
+    // Create network node with shared store
+    let network = IrohNetwork::spawn(store.get_store_clone()).await?;
+
+    // Generate ticket
+    let ticket = network.share(hash).await?;
+
+    info!("Sharing environment: {}/{}", project, env);
+    println!("\nTo clone this environment, run:");
+    println!("  envbro clone {}\n", ticket);
+    println!("Press Ctrl+C to stop sharing...");
+
+    // Wait for Ctrl+C
+    tokio::signal::ctrl_c()
+        .await
+        .context("Failed to listen for Ctrl+C")?;
+
+    info!("Shutting down...");
+    Box::new(network).shutdown().await?;
 
     Ok(())
 }
