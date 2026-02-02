@@ -14,4 +14,5 @@ We will move away from storing plain text files in `~/.envbro` and instead use *
 |Args|Args|
 | [ISSUE-1](./issues/1-implement-encryption.md) | Implement AES-256-GCM Encryption for Local Storage |
 | [ISSUE-2](./issues/2-integrate-iroh.md) | Integrate Iroh for Storage & Transfer |
+| [ISSUE-3](./issues/3-atomic-manifest-updates.md) | Atomic Manifest Updates (Robustness & Deferred) |
 | [ISSUE-4](./issues/4-key-backup.md) | Implement Key Export & Paper Backup (Deferred) |
