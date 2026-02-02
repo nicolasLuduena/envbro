@@ -41,7 +41,7 @@ enum Commands {
         #[arg(long, conflicts_with = "path")]
         ticket: Option<String>,
         /// Target filename (used with --ticket, default: .env)
-        #[arg(long)]
+        #[arg(long, requires = "ticket", conflicts_with = "path")]
         filename: Option<String>,
         /// Skip confirmation prompts
         #[arg(short, long)]

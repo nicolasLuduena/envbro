@@ -102,12 +102,18 @@ pub async fn register(
 
             // Initialize network and download the blob
             let network = IrohNetwork::spawn(store.get_store_clone()).await?;
-            let (hash, encrypted_bytes) = network.connect_and_download(&ticket).await?;
+            let result = network.connect_and_download(&ticket).await;
+
+            // Cleanup network regardless of result
+            let shutdown_result = Box::new(network).shutdown().await;
+
+            // Return download error first if it exists
+            let (hash, encrypted_bytes) = result?;
 
             info!("Downloaded blob with hash: {}", hash);
 
-            // Cleanup network
-            Box::new(network).shutdown().await?;
+            // Then return shutdown error if it exists
+            shutdown_result?;
 
             (filename, encrypted_bytes)
         }
@@ -305,7 +311,10 @@ pub async fn share(args: ShareArgs<'_>, store: &crate::store::iroh::IrohStore) -
 
     info!("Sharing environment: {}/{}", args.project, args.env);
     println!("\nTo clone this environment, run:");
-    println!("  envbro clone {}\n", ticket);
+    println!(
+        "  envbro register {} {} --ticket {}\n",
+        args.project, args.env, ticket
+    );
     println!("Press Ctrl+C to stop sharing...");
 
     // Wait for Ctrl+C
