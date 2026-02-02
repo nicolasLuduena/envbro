@@ -27,6 +27,24 @@ struct Manifest {
     projects: HashMap<String, HashMap<String, EnvEntry>>,
 }
 
+impl Manifest {
+    fn is_hash_used(&self, hash: &str) -> bool {
+        self.projects
+            .values()
+            .flat_map(|envs| envs.values())
+            .any(|e| e.hash == hash)
+    }
+
+    fn remove_entry(&mut self, project: &str, env: &str) {
+        if let Some(envs) = self.projects.get_mut(project) {
+            envs.remove(env);
+            if envs.is_empty() {
+                self.projects.remove(project);
+            }
+        }
+    }
+}
+
 pub struct IrohStore {
     store: FsStore,
     manifest_path: PathBuf,
@@ -105,22 +123,48 @@ impl Store for IrohStore {
             .store
             .import_bytes(data.to_vec().into(), iroh_blobs::BlobFormat::Raw)
             .await?;
-        let hash = *temp_tag.hash();
+        let new_hash = *temp_tag.hash();
 
-        // Update manifest
-        {
+        // Check for orphan cleanup and update manifest
+        let hash_to_prune = {
             let mut manifest = self.manifest.lock().await;
+
+            // 1. Get existing hash (if any)
+            let old_hash = manifest
+                .projects
+                .get(project)
+                .and_then(|envs| envs.get(env))
+                .map(|e| e.hash.clone());
+
+            // 2. Update Manifest with new entry
             let project_entry = manifest.projects.entry(project.to_string()).or_default();
             project_entry.insert(
                 env.to_string(),
                 EnvEntry {
                     filename: filename.to_string(),
-                    hash: hash.to_string(),
+                    hash: new_hash.to_string(),
                 },
             );
-        }
 
+            // 3. Determine if old blob is orphaned
+            old_hash.filter(|old_h| {
+                // Only consider pruning if hash changed
+                old_h != &new_hash.to_string() && !manifest.is_hash_used(old_h)
+            })
+        };
+
+        // 4. Persist manifest FIRST (safety)
         self.save_manifest().await?;
+
+        // 5. Prune orphan if identified
+        if let Some(h_str) = hash_to_prune {
+            if let Ok(hash) = Hash::from_str(&h_str) {
+                // If this fails, it's not critical (just a leaked blob)
+                if let Err(e) = self.store.delete(vec![hash]).await {
+                    warn!("Failed to prune orphaned blob {}: {}", h_str, e);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -154,34 +198,34 @@ impl Store for IrohStore {
     }
 
     async fn delete(&self, project: &str, env: &str) -> Result<()> {
-        // Get the hash before removing from manifest so we can delete the blob
         let hash_to_delete = {
-            let manifest = self.manifest.lock().await;
-            manifest
+            let mut manifest = self.manifest.lock().await;
+
+            // 1. Get the hash of the entry we are about to remove
+            let hash = manifest
                 .projects
                 .get(project)
                 .and_then(|envs| envs.get(env))
-                .map(|entry| entry.hash.clone())
+                .map(|entry| entry.hash.clone());
+
+            // 2. Remove the entry from the manifest (in memory)
+            if hash.is_some() {
+                manifest.remove_entry(project, env);
+            }
+
+            // 3. Check if orphaned (filter returns the hash only if !is_used)
+            hash.filter(|h| !manifest.is_hash_used(h))
         };
 
-        // Delete the blob from Iroh store if it exists
+        // 4. Save the manifest FIRST (so we don't end up with a pointing-to-deleted state)
+        self.save_manifest().await?;
+
+        // 5. Delete the blob if it was unique to the removed entry
         if let Some(hash_str) = hash_to_delete {
             let hash = Hash::from_str(&hash_str)?;
-            // Delete the blob - this removes it from the store
             self.store.delete(vec![hash]).await?;
         }
 
-        // Update manifest
-        {
-            let mut manifest = self.manifest.lock().await;
-            if let Some(envs) = manifest.projects.get_mut(project) {
-                envs.remove(env);
-                if envs.is_empty() {
-                    manifest.projects.remove(project);
-                }
-            }
-        }
-        self.save_manifest().await?;
         Ok(())
     }
 
