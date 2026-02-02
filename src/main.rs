@@ -1,5 +1,6 @@
 mod commands;
 mod security;
+mod store;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -64,7 +65,8 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -74,6 +76,9 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Initialize store
+    let store = crate::store::iroh::IrohStore::new().await?;
 
     let passphrase_input = match &cli.command {
         Commands::List { .. } => None, // Not needed for listing
@@ -97,40 +102,56 @@ fn main() -> Result<()> {
             project,
             env,
             force,
-        } => commands::set_env(
-            &project,
-            &env,
-            force,
-            passphrase.expect("Passphrase required for set"),
-        )?,
+        } => {
+            commands::set_env(
+                &project,
+                &env,
+                force,
+                passphrase.expect("Passphrase required for set"),
+                &store,
+            )
+            .await?
+        }
         Commands::Register {
             project,
             env,
             path,
             force,
-        } => commands::register(
-            &project,
-            &env,
-            &path,
-            force,
-            passphrase.expect("Passphrase required for register"),
-        )?,
+        } => {
+            commands::register(
+                &project,
+                &env,
+                &path,
+                force,
+                passphrase.expect("Passphrase required for register"),
+                &store,
+            )
+            .await?
+        }
         Commands::Rm {
             project,
             env,
             force,
-        } => commands::remove(
-            &project,
-            &env,
-            force,
-            passphrase.expect("Passphrase required for rm"),
-        )?,
-        Commands::List { project } => commands::list(project.as_deref())?,
-        Commands::Show { project, env } => commands::show(
-            &project,
-            &env,
-            passphrase.expect("Passphrase required for show"),
-        )?,
+        } => {
+            commands::remove(
+                &project,
+                &env,
+                force,
+                passphrase.expect("Passphrase required for rm"),
+                &store,
+            )
+            .await?
+        }
+        Commands::List { project } => commands::list(project.as_deref(), &store).await?,
+        Commands::Show { project, env } => {
+            commands::show(
+                &project,
+                &env,
+                passphrase.expect("Passphrase required for show"),
+                &store,
+            )
+            .await?
+        }
     }
 
     Ok(())

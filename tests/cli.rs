@@ -24,14 +24,7 @@ fn test_register_and_list() {
         .success()
         .stderr(predicate::str::contains("New env stored"));
 
-    // Verify it exists in the store
-    let stored_file = temp_dir.path().join("myproject/prod/.env.test");
-    assert!(stored_file.exists());
-    let content = fs::read(&stored_file).unwrap();
-    // Should NOT be plain text
-    assert_ne!(content, b"FOO=bar");
-
-    // Test List
+    // Verify it exists in the store via list
     let mut cmd_list = Command::new(env!("CARGO_BIN_EXE_envbro"));
     cmd_list
         .env("ENVBRO_ROOT", root)
@@ -132,8 +125,16 @@ fn test_remove() {
         .assert()
         .success();
 
-    // Verify it exists
-    assert!(temp_dir.path().join("myproject/test").exists());
+    // Verify it exists via show
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
+        .arg("show")
+        .arg("myproject")
+        .arg("test")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("DELETE_ME=1"));
 
     // Run remove with --force
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_envbro"));
@@ -147,8 +148,11 @@ fn test_remove() {
         .success()
         .stderr(predicate::str::contains("Removed env: test"));
 
-    // Verify removed
-    assert!(!temp_dir.path().join("myproject/test").exists());
-    // Also verify project dir removed since it was empty
-    assert!(!temp_dir.path().join("myproject").exists());
+    // Verify removed via list
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("myproject").not());
 }

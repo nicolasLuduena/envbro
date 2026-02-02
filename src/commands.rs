@@ -1,29 +1,21 @@
 use crate::security;
+use crate::store::Store;
 use anyhow::{bail, Context, Result};
 use console::Style;
 use dialoguer::{theme::ColorfulTheme, Confirm};
 use secrecy::SecretString;
 use similar::{ChangeTag, TextDiff};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{info, warn};
-use walkdir::WalkDir;
 
-/// Returns the path to the storage directory ~/.envbro
-fn get_store_path() -> Result<PathBuf> {
-    if let Ok(root) = std::env::var("ENVBRO_ROOT") {
-        return Ok(PathBuf::from(root));
-    }
-    let home = dirs::home_dir().context("Could not find home directory")?;
-    Ok(home.join(".envbro"))
-}
-
-pub fn register(
+pub async fn register(
     project: &str,
     env: &str,
     target_path: &str,
     force: bool,
     passphrase: &SecretString,
+    store: &impl Store,
 ) -> Result<()> {
     if env.contains('/') {
         bail!("Environment name cannot contain /");
@@ -34,19 +26,8 @@ pub fn register(
         bail!("Target file doesn't exist or is not a file");
     }
 
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
-
-    // Create directory
-    fs::create_dir_all(&env_path).context("Failed to create env directory")?;
-
-    let file_name = target_path.file_name().context("Invalid target filename")?;
-    let stored_env_path = env_path.join(file_name);
-
     // Check existing
-    if stored_env_path.exists() {
-        let encrypted_content =
-            fs::read(&stored_env_path).context("Failed to read existing stored env")?;
+    if let Ok((_, encrypted_content)) = store.get(project, env).await {
         let old_content_bytes = security::decrypt(&encrypted_content, passphrase)
             .context("Failed to decrypt existing env file")?;
         let old_content =
@@ -68,42 +49,38 @@ pub fn register(
     }
 
     let new_content_bytes = fs::read(target_path).context("Failed to read target file")?;
-    // Verify it is UTF-8 to ensure we are encrypting text (optional but good sanity check since we treat it as env vars)
+    // Verify it is UTF-8
     let _ = std::str::from_utf8(&new_content_bytes).context("Target file is not valid UTF-8")?;
 
+    let filename = target_path
+        .file_name()
+        .context("Invalid target filename")?
+        .to_string_lossy();
+
     let encrypted = security::encrypt(&new_content_bytes, passphrase)?;
-    fs::write(stored_env_path, encrypted).context("Failed to write encrypted env file")?;
+    store.put(project, env, &filename, &encrypted).await?;
     info!("New env stored");
 
     Ok(())
 }
 
-pub fn set_env(project: &str, env: &str, force: bool, passphrase: &SecretString) -> Result<()> {
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
-
-    if !env_path.exists() || !env_path.is_dir() {
-        warn!("Env does not exist");
-        return Ok(());
-    }
-
-    // Find the first file in the directory (assuming one env file per env folder)
-    let mut entries = fs::read_dir(&env_path)?;
-    let entry = match entries.next() {
-        Some(Ok(e)) => e,
-        _ => {
-            warn!("Env directory is empty");
+pub async fn set_env(
+    project: &str,
+    env: &str,
+    force: bool,
+    passphrase: &SecretString,
+    store: &impl Store,
+) -> Result<()> {
+    let (target_file_name, encrypted_stored) = match store.get(project, env).await {
+        Ok(data) => data,
+        Err(_) => {
+            warn!("Env not found");
             return Ok(());
         }
     };
 
-    let stored_file_path = entry.path();
-    let file_name = stored_file_path
-        .file_name()
-        .context("Invalid stored filename")?;
-    let target_file_path = std::env::current_dir()?.join(file_name);
+    let target_file_path = std::env::current_dir()?.join(&target_file_name);
 
-    let encrypted_stored = fs::read(&stored_file_path).context("Failed to read stored env file")?;
     let decrypted_content_bytes = security::decrypt(&encrypted_stored, passphrase)
         .context("Failed to decrypt stored env file")?;
 
@@ -130,23 +107,20 @@ pub fn set_env(project: &str, env: &str, force: bool, passphrase: &SecretString)
 
     fs::write(&target_file_path, new_content.as_bytes())
         .context("Failed to write target env file")?;
-    info!("{} set", env);
+    info!("{} set to {}", env, target_file_name);
 
     Ok(())
 }
 
-pub fn remove(project: &str, env: &str, force: bool, passphrase: &SecretString) -> Result<()> {
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
-
-    if !env_path.exists() || !env_path.is_dir() {
-        warn!("Env does not exist");
-        return Ok(());
-    }
-
-    let mut entries = fs::read_dir(&env_path)?;
-    if let Some(Ok(entry)) = entries.next() {
-        let encrypted_content = fs::read(entry.path()).context("Failed to read env file")?;
+pub async fn remove(
+    project: &str,
+    env: &str,
+    force: bool,
+    passphrase: &SecretString,
+    store: &impl Store,
+) -> Result<()> {
+    // Check if exists
+    if let Ok((_, encrypted_content)) = store.get(project, env).await {
         let content_bytes = security::decrypt(&encrypted_content, passphrase)
             .context("Failed to decrypt env file for confirmation")?;
         let content = String::from_utf8_lossy(&content_bytes);
@@ -169,72 +143,58 @@ pub fn remove(project: &str, env: &str, force: bool, passphrase: &SecretString) 
                 return Ok(());
             }
         }
+
+        store.delete(project, env).await?;
+        info!("Removed env: {}", env);
+    } else {
+        warn!("Env does not exist");
     }
 
-    fs::remove_dir_all(&env_path).context("Failed to remove env directory")?;
-    info!("Removed env: {}", env);
+    Ok(())
+}
 
-    // Cleanup project dir if empty
-    let project_path = store_root.join(project);
-    if let Ok(entries) = fs::read_dir(&project_path) {
-        if entries.count() == 0 {
-            fs::remove_dir(&project_path).ok(); // Ignore if fails
+pub async fn list(project: Option<&str>, store: &impl Store) -> Result<()> {
+    if let Some(p) = project {
+        println!("{}", p);
+        let envs = store.list_envs(p).await?;
+        if envs.is_empty() {
+            println!("  (no environments)");
+        }
+        for env in envs {
+            println!("  {}", env);
+        }
+    } else {
+        let projects = store.list_projects().await?;
+        if projects.is_empty() {
+            println!("No projects found.");
+            return Ok(());
+        }
+        for p in projects {
+            println!("{}", p);
+            let envs = store.list_envs(&p).await?;
+            for env in envs {
+                println!("  {}", env);
+            }
         }
     }
 
     Ok(())
 }
 
-pub fn list(project: Option<&str>) -> Result<()> {
-    let store_root = get_store_path()?;
-    let search_root = if let Some(p) = project {
-        store_root.join(p)
-    } else {
-        store_root
-    };
-
-    if !search_root.exists() {
-        println!("No environments found.");
-        return Ok(());
-    }
-
-    // Simple tree-like view
-    println!("{}", search_root.display());
-    // Simple tree-like view
-
-    for entry in WalkDir::new(&search_root)
-        .min_depth(1)
-        .max_depth(3)
-        .sort_by_file_name()
-    {
-        let entry = entry?;
-        let depth = entry.depth();
-        let indent = "  ".repeat(depth);
-        let name = entry.file_name().to_string_lossy();
-        println!("{}{}", indent, name);
-    }
-
-    Ok(())
-}
-
-pub fn show(project: &str, env: &str, passphrase: &SecretString) -> Result<()> {
-    let store_root = get_store_path()?;
-    let env_path = store_root.join(project).join(env);
-
-    if !env_path.exists() || !env_path.is_dir() {
-        bail!("Project environment does not exist");
-    }
-
-    let mut entries = fs::read_dir(&env_path)?;
-    match entries.next() {
-        Some(Ok(entry)) => {
-            let encrypted_content = fs::read(entry.path()).context("Failed to read env file")?;
+pub async fn show(
+    project: &str,
+    env: &str,
+    passphrase: &SecretString,
+    store: &impl Store,
+) -> Result<()> {
+    match store.get(project, env).await {
+        Ok((_, encrypted_content)) => {
             let content_bytes = security::decrypt(&encrypted_content, passphrase)?;
             let content = String::from_utf8_lossy(&content_bytes);
             println!("{}", content);
         }
-        _ => {
-            bail!("Environment directory is empty");
+        Err(_) => {
+            bail!("Environment not found");
         }
     }
 
