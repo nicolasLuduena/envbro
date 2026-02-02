@@ -95,13 +95,22 @@ pub async fn register(
         RegisterSource::Remote { ticket, filename } => {
             // Remote registration: download from P2P
             use crate::network::{IrohNetwork, Network};
+            use iroh_blobs::store::fs::Store as FsStore;
+            use tempfile::TempDir;
 
             let filename = filename.unwrap_or_else(|| ".env".to_string());
 
             info!("Connecting to peer and downloading environment...");
 
-            // Initialize network and download the blob
-            let network = IrohNetwork::spawn(store.get_store_clone()).await?;
+            // Create a temporary store for the download operation
+            // This avoids conflicts with the main store when shutting down the network
+            let temp_dir = TempDir::new().context("Failed to create temp directory")?;
+            let temp_store = FsStore::load(temp_dir.path())
+                .await
+                .context("Failed to create temporary store")?;
+
+            // Initialize network with temporary store and download the blob
+            let network = IrohNetwork::spawn(temp_store).await?;
             let result = network.connect_and_download(&ticket).await;
 
             // Cleanup network regardless of result
@@ -113,7 +122,11 @@ pub async fn register(
             info!("Downloaded blob with hash: {}", hash);
 
             // Then return shutdown error if it exists
-            shutdown_result?;
+            if let Err(e) = shutdown_result {
+                warn!("Network shutdown error (non-fatal): {:#}", e);
+            }
+
+            // temp_dir will be automatically cleaned up when dropped
 
             (filename, encrypted_bytes)
         }

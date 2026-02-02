@@ -30,6 +30,10 @@ async fn test_p2p_blob_transfer() -> Result<()> {
 
     // Spawn provider node
     let provider = IrohNetwork::spawn(provider_store).await?;
+
+    // Allow some time for the provider to discover local addresses
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
     let ticket_str = provider.share(hash).await?;
 
     println!("Provider sharing ticket: {}", ticket_str);
