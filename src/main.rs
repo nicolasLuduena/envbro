@@ -34,9 +34,15 @@ enum Commands {
         project: String,
         /// Environment name
         env: String,
-        /// Path to the environment file
+        /// Path to a local environment file
+        #[arg(long, conflicts_with = "ticket")]
+        path: Option<String>,
+        /// Iroh ticket for remote environment
+        #[arg(long, conflicts_with = "path")]
+        ticket: Option<String>,
+        /// Target filename (used with --ticket, default: .env)
         #[arg(long)]
-        path: String,
+        filename: Option<String>,
         /// Skip confirmation prompts
         #[arg(short, long)]
         force: bool,
@@ -90,6 +96,9 @@ async fn main() -> Result<()> {
 
     let passphrase_input = match &cli.command {
         Commands::List { .. } | Commands::Share { .. } => None, // Not needed for listing or sharing
+        Commands::Register {
+            ticket: Some(_), ..
+        } => None, // Not needed for remote registration (blob already encrypted)
         _ => {
             if let Ok(p) = std::env::var("ENVBRO_PASSPHRASE") {
                 Some(SecretString::from(p))
@@ -112,10 +121,12 @@ async fn main() -> Result<()> {
             force,
         } => {
             commands::set_env(
-                &project,
-                &env,
-                force,
-                passphrase.expect("Passphrase required for set"),
+                commands::SetArgs {
+                    project: &project,
+                    env: &env,
+                    force,
+                    passphrase: passphrase.expect("Passphrase required for set"),
+                },
                 &store,
             )
             .await?
@@ -124,17 +135,29 @@ async fn main() -> Result<()> {
             project,
             env,
             path,
+            ticket,
+            filename,
             force,
         } => {
-            commands::register(
-                &project,
-                &env,
-                &path,
+            let source = if let Some(p) = path {
+                commands::RegisterSource::Local { path: p }
+            } else if let Some(t) = ticket {
+                commands::RegisterSource::Remote {
+                    ticket: t,
+                    filename,
+                }
+            } else {
+                anyhow::bail!("Must provide either --path or --ticket");
+            };
+
+            let args = commands::RegisterArgs {
+                project: &project,
+                env: &env,
                 force,
-                passphrase.expect("Passphrase required for register"),
-                &store,
-            )
-            .await?
+                passphrase,
+            };
+
+            commands::register(args, source, &store).await?
         }
         Commands::Rm {
             project,
@@ -142,25 +165,46 @@ async fn main() -> Result<()> {
             force,
         } => {
             commands::remove(
-                &project,
-                &env,
-                force,
-                passphrase.expect("Passphrase required for rm"),
+                commands::RmArgs {
+                    project: &project,
+                    env: &env,
+                    force,
+                    passphrase: passphrase.expect("Passphrase required for rm"),
+                },
                 &store,
             )
             .await?
         }
-        Commands::List { project } => commands::list(project.as_deref(), &store).await?,
+        Commands::List { project } => {
+            commands::list(
+                commands::ListArgs {
+                    project: project.as_deref(),
+                },
+                &store,
+            )
+            .await?
+        }
         Commands::Show { project, env } => {
             commands::show(
-                &project,
-                &env,
-                passphrase.expect("Passphrase required for show"),
+                commands::ShowArgs {
+                    project: &project,
+                    env: &env,
+                    passphrase: passphrase.expect("Passphrase required for show"),
+                },
                 &store,
             )
             .await?
         }
-        Commands::Share { project, env } => commands::share(&project, &env, &store).await?,
+        Commands::Share { project, env } => {
+            commands::share(
+                commands::ShareArgs {
+                    project: &project,
+                    env: &env,
+                },
+                &store,
+            )
+            .await?
+        }
     }
 
     Ok(())

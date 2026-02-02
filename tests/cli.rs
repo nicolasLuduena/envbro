@@ -22,7 +22,7 @@ fn test_register_and_list() {
         .arg(src_env.to_str().unwrap())
         .assert()
         .success()
-        .stderr(predicate::str::contains("New env stored"));
+        .stderr(predicate::str::contains("registered successfully"));
 
     // Verify it exists in the store via list
     let mut cmd_list = Command::new(env!("CARGO_BIN_EXE_envbro"));
