@@ -17,7 +17,6 @@ pub trait Store: Send + Sync {
     async fn list_projects(&self) -> Result<Vec<String>>;
 
     /// Lists all environments for a given project.
-    /// Lists all environments for a given project.
     async fn list_envs(&self, project: &str) -> Result<Vec<String>>;
 
     /// Gets the content hash/ID for a specific project/env (if applicable).

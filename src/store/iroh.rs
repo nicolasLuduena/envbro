@@ -7,7 +7,7 @@ use iroh_blobs::store::{Map, MapEntry, Store as _};
 use iroh_blobs::Hash;
 use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::sync::Mutex;
@@ -25,7 +25,7 @@ struct EnvEntry {
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct Manifest {
     // Project -> Env -> EnvEntry
-    projects: HashMap<String, HashMap<String, EnvEntry>>,
+    projects: BTreeMap<String, BTreeMap<String, EnvEntry>>,
 }
 
 impl Manifest {
@@ -54,7 +54,10 @@ pub struct IrohStore {
 
 impl IrohStore {
     pub async fn new() -> Result<Self> {
-        let root = get_store_path()?;
+        Self::open(get_store_path()?).await
+    }
+
+    pub async fn open(root: PathBuf) -> Result<Self> {
         let iroh_data_path = root.join(IROH_DATA_DIR);
         tokio::fs::create_dir_all(&iroh_data_path).await?;
 
@@ -64,7 +67,9 @@ impl IrohStore {
         let manifest_path = root.join(MANIFEST_FILE);
         let manifest = if manifest_path.exists() {
             let content = tokio::fs::read_to_string(&manifest_path).await?;
-            serde_json::from_str(&content).unwrap_or_default()
+            serde_json::from_str(&content).with_context(|| {
+                format!("Failed to parse manifest at {}", manifest_path.display())
+            })?
         } else {
             Manifest::default()
         };
@@ -272,7 +277,56 @@ impl SharableStore for IrohStore {
     }
 }
 
-impl IrohStore {
-    // get_hash implementation removed in favor of trait implementation
-    // get_store_clone removed as it is no longer needed publicly
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn open_tmp() -> (TempDir, IrohStore) {
+        let dir = TempDir::new().unwrap();
+        let store = IrohStore::open(dir.path().to_path_buf()).await.unwrap();
+        (dir, store)
+    }
+
+    #[tokio::test]
+    async fn put_get_round_trip() {
+        let (_dir, s) = open_tmp().await;
+        s.put("p", "e", ".env", b"A=1").await.unwrap();
+        assert_eq!(
+            s.get("p", "e").await.unwrap(),
+            (".env".to_string(), b"A=1".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_blob_survives_deleting_one_env() {
+        let (_dir, s) = open_tmp().await;
+        s.put("p", "a", ".env", b"SAME").await.unwrap();
+        s.put("p", "b", ".env", b"SAME").await.unwrap();
+        s.delete("p", "a").await.unwrap();
+        assert!(s.get("p", "a").await.is_err());
+        assert_eq!(s.get("p", "b").await.unwrap().1, b"SAME");
+    }
+
+    #[tokio::test]
+    async fn overwrite_prunes_old_blob() {
+        let (_dir, s) = open_tmp().await;
+        s.put("p", "e", ".env", b"OLD").await.unwrap();
+        let old = Hash::from_str(&s.get_hash("p", "e").await.unwrap()).unwrap();
+        s.put("p", "e", ".env", b"NEW").await.unwrap();
+        assert!(s.store.get(&old).await.unwrap().is_none());
+        assert_eq!(s.get("p", "e").await.unwrap().1, b"NEW");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_entry_and_empty_project() {
+        let (_dir, s) = open_tmp().await;
+        s.put("p", "a", ".env", b"A").await.unwrap();
+        s.put("p", "b", ".env", b"B").await.unwrap();
+        s.delete("p", "a").await.unwrap();
+        assert!(s.get("p", "a").await.is_err());
+        assert_eq!(s.list_projects().await.unwrap(), vec!["p"]);
+        s.delete("p", "b").await.unwrap();
+        assert!(s.list_projects().await.unwrap().is_empty());
+    }
 }

@@ -7,7 +7,7 @@ use secrecy::SecretString;
 use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
 
 pub enum RegisterSource {
     Local {
@@ -164,10 +164,7 @@ pub async fn register(
 pub async fn set_env(args: SetArgs<'_>, store: &impl Store) -> Result<()> {
     let (target_file_name, encrypted_stored) = match store.get(args.project, args.env).await {
         Ok(data) => data,
-        Err(_) => {
-            warn!("Env not found");
-            return Ok(());
-        }
+        Err(_) => bail!("Environment not found"),
     };
 
     let target_file_path = std::env::current_dir()?.join(&target_file_name);
@@ -196,6 +193,21 @@ pub async fn set_env(args: SetArgs<'_>, store: &impl Store) -> Result<()> {
         }
     }
 
+    // Decrypted secrets: owner-only on creation; an existing file keeps its mode.
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&target_file_path)
+            .and_then(|mut f| f.write_all(new_content.as_bytes()))
+            .context("Failed to write target env file")?;
+    }
+    #[cfg(not(unix))]
     fs::write(&target_file_path, new_content.as_bytes())
         .context("Failed to write target env file")?;
     info!("{} set to {}", args.env, target_file_name);
@@ -204,36 +216,35 @@ pub async fn set_env(args: SetArgs<'_>, store: &impl Store) -> Result<()> {
 }
 
 pub async fn remove(args: RmArgs<'_>, store: &impl Store) -> Result<()> {
-    // Check if exists
-    if let Ok((_, encrypted_content)) = store.get(args.project, args.env).await {
-        let content_bytes = security::decrypt(&encrypted_content, args.passphrase)
-            .context("Failed to decrypt env file for confirmation")?;
-        let content = String::from_utf8_lossy(&content_bytes);
+    let Ok((_, encrypted_content)) = store.get(args.project, args.env).await else {
+        bail!("Environment not found");
+    };
 
-        if !args.force {
-            if !Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!(
-                    "Are you sure you want to remove this?:\n\n{}",
-                    content
-                ))
-                .interact()?
-            {
-                return Ok(());
-            }
+    let content_bytes = security::decrypt(&encrypted_content, args.passphrase)
+        .context("Failed to decrypt env file for confirmation")?;
+    let content = String::from_utf8_lossy(&content_bytes);
 
-            if !Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt("Are you sure? (Final confirmation)")
-                .interact()?
-            {
-                return Ok(());
-            }
+    if !args.force {
+        if !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!(
+                "Are you sure you want to remove this?:\n\n{}",
+                content
+            ))
+            .interact()?
+        {
+            return Ok(());
         }
 
-        store.delete(args.project, args.env).await?;
-        info!("Removed env: {}", args.env);
-    } else {
-        warn!("Env does not exist");
+        if !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Are you sure? (Final confirmation)")
+            .interact()?
+        {
+            return Ok(());
+        }
     }
+
+    store.delete(args.project, args.env).await?;
+    info!("Removed env: {}", args.env);
 
     Ok(())
 }

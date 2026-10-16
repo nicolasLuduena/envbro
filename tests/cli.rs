@@ -156,3 +156,49 @@ fn test_remove() {
         .success()
         .stdout(predicate::str::contains("myproject").not());
 }
+
+#[test]
+fn test_set_missing_env_fails() {
+    let temp_dir = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .current_dir(cwd.path())
+        .env("ENVBRO_ROOT", temp_dir.path())
+        .env("ENVBRO_PASSPHRASE", "testpass")
+        .arg("set")
+        .arg("nope")
+        .arg("dev")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Environment not found"));
+}
+
+#[test]
+fn test_show_wrong_passphrase_fails() {
+    let temp_dir = tempdir().unwrap();
+    let root = temp_dir.path().to_str().unwrap();
+    let env_src = temp_dir.path().join("source.env");
+    fs::write(&env_src, "KEY=VALUE").unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "testpass")
+        .arg("register")
+        .arg("myproject")
+        .arg("staging")
+        .arg("--path")
+        .arg(env_src.to_str().unwrap())
+        .assert()
+        .success();
+
+    Command::new(env!("CARGO_BIN_EXE_envbro"))
+        .env("ENVBRO_ROOT", root)
+        .env("ENVBRO_PASSPHRASE", "wrongpass")
+        .arg("show")
+        .arg("myproject")
+        .arg("staging")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("KEY=VALUE").not());
+}

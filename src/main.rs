@@ -6,6 +6,7 @@ mod store;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use secrecy::SecretString;
+use store::Store as _;
 
 #[derive(Parser)]
 #[command(name = "envbro")]
@@ -93,6 +94,16 @@ async fn main() -> Result<()> {
 
     // Initialize store
     let store = crate::store::iroh::IrohStore::new().await?;
+
+    // Fail on a mistyped project/env before asking for the passphrase.
+    if let Commands::Set { project, env, .. }
+    | Commands::Rm { project, env, .. }
+    | Commands::Show { project, env } = &cli.command
+    {
+        if store.get_hash(project, env).await.is_err() {
+            anyhow::bail!("Environment not found");
+        }
+    }
 
     let passphrase_input = match &cli.command {
         Commands::List { .. } | Commands::Share { .. } => None, // Not needed for listing or sharing

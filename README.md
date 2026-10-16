@@ -49,7 +49,7 @@ Set the environment for a project by running:
 envbro set <project_name> <environment>
 ```
 
-This will apply the environment variables from the stored environment to your current context (mechanism depends on specific implementation, e.g., symlinking or decrypting to a file).
+This decrypts the stored file and writes it into the current directory under the filename it was registered with. If a different file with that name is already there, it shows a diff and asks for confirmation first (skip with `--force`).
 
 ### Remove Environment
 
@@ -83,6 +83,17 @@ Share an environment with another peer:
 envbro share <project_name> <environment>
 ```
 This will generate a ticket that you can share with another user to let them `register` this environment securely.
+
+The blob is transferred still encrypted, so the recipient needs the passphrase the environment was registered with to `set` or `show` it.
+
+### Passphrase
+
+Each environment is encrypted with the passphrase given when it was registered and nothing checks that passphrases match across environments, so use one passphrase per vault.
+
+### Environment Variables
+
+* `ENVBRO_PASSPHRASE`: use this passphrase instead of prompting for one.
+* `ENVBRO_ROOT`: keep the vault in this directory instead of `~/.envbro`.
 
 **Acknowledgments**
 -----------------
